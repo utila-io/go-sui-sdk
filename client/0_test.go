@@ -6,11 +6,11 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/utila-io/go-sui-sdk/sui_types"
-	"github.com/utila-io/go-sui-sdk/types"
+	"github.com/coming-chat/go-sui/v2/sui_types"
+	"github.com/coming-chat/go-sui/v2/types"
 	"github.com/shopspring/decimal"
 
-	"github.com/utila-io/go-sui-sdk/account"
+	"github.com/coming-chat/go-sui/v2/account"
 	"github.com/stretchr/testify/require"
 )
 

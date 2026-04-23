@@ -1,4 +1,4 @@
-module github.com/utila-io/go-sui-sdk
+module github.com/coming-chat/go-sui/v2
 
 go 1.22
 

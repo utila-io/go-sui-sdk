@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/utila-io/go-sui-sdk/lib"
-	"github.com/utila-io/go-sui-sdk/sui_types"
+	"github.com/coming-chat/go-sui/v2/lib"
+	"github.com/coming-chat/go-sui/v2/sui_types"
 )
 
 type StakeStatus = lib.TagJson[Status]

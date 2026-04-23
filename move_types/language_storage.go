@@ -1,6 +1,6 @@
 package move_types
 
-import "github.com/utila-io/go-sui-sdk/lib"
+import "github.com/coming-chat/go-sui/v2/lib"
 
 type StructTag struct {
 	Address    AccountAddress
