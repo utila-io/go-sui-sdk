@@ -183,6 +183,7 @@ func (p *ProgrammableTransactionBuilder) WithdrawalTransfer(
 	amount uint64,
 	withdrawalAmount uint64,
 	coinType move_types.TypeTag,
+	sender SuiAddress,
 ) error {
 	recArg, err := p.Pure(recipient)
 	if err != nil {
@@ -271,6 +272,27 @@ func (p *ProgrammableTransactionBuilder) WithdrawalTransfer(
 			}{Arguments: []Argument{splitCoin}, Argument: recArg},
 		},
 	)
+
+	// When sourceCoin is a command Result (no-coins path), the remainder after
+	// SplitCoins must be explicitly consumed — Sui requires all non-droppable
+	// Results to be used. Transfer it back to the sender. For the coins path,
+	// sourceCoin is an ObjectArg (owned object) that returns to the owner
+	// automatically, but an explicit transfer is harmless and keeps logic uniform.
+	if len(coins) == 0 {
+		senderArg, serr := p.Pure(sender)
+		if serr != nil {
+			return serr
+		}
+		p.Command(
+			Command{
+				TransferObjects: &struct {
+					Arguments []Argument
+					Argument  Argument
+				}{Arguments: []Argument{sourceCoin}, Argument: senderArg},
+			},
+		)
+	}
+
 	return nil
 }
 

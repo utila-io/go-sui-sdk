@@ -195,8 +195,11 @@ func TestWithdrawalTransfer_WithCoins(t *testing.T) {
 		{ObjectId: coinID2},
 	}
 
+	var sender SuiAddress
+	sender[31] = 0xAA
+
 	ptb := NewProgrammableTransactionBuilder()
-	err := ptb.WithdrawalTransfer(recipient, coins, 1_500_000, 500_000, coinType)
+	err := ptb.WithdrawalTransfer(recipient, coins, 1_500_000, 500_000, coinType, sender)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,6 +227,7 @@ func TestWithdrawalTransfer_WithCoins(t *testing.T) {
 	}
 
 	// Commands: redeem_funds, MergeCoins, SplitCoins, TransferObjects
+	// (with-coins path: no extra transfer for remainder since sourceCoin is an ObjectArg)
 	if len(pt.Commands) != 4 {
 		t.Fatalf("expected 4 commands, got %d", len(pt.Commands))
 	}
@@ -243,9 +247,7 @@ func TestWithdrawalTransfer_WithCoins(t *testing.T) {
 		t.Fatal("cmd[3] must be TransferObjects")
 	}
 
-	// BCS round-trip
-	var sender SuiAddress
-	sender[31] = 0xAA
+	// BCS round-trip (reuse sender from above)
 	txData := NewProgrammable(sender, nil, pt, 0, 0)
 	data, err := bcs.Marshal(txData)
 	if err != nil {
@@ -268,27 +270,34 @@ func TestWithdrawalTransfer_WithoutCoins(t *testing.T) {
 	var recipient SuiAddress
 	recipient[31] = 0xBB
 
+	var sender SuiAddress
+	sender[31] = 0xAA
+
 	coinType, _ := ParseCoinTypeTag("0x2::sui::SUI")
 
 	ptb := NewProgrammableTransactionBuilder()
-	err := ptb.WithdrawalTransfer(recipient, nil, 2_000_000, 2_000_000, coinType)
+	err := ptb.WithdrawalTransfer(recipient, nil, 2_000_000, 2_000_000, coinType, sender)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	pt := ptb.Finish()
 
-	// Inputs: recipient(0), amount(1), withdrawal(2)
-	if len(pt.Inputs) != 3 {
-		t.Fatalf("expected 3 inputs, got %d", len(pt.Inputs))
+	// Inputs: recipient(0), amount(1), withdrawal(2), sender(3)
+	if len(pt.Inputs) != 4 {
+		t.Fatalf("expected 4 inputs, got %d", len(pt.Inputs))
 	}
 	if pt.Inputs[2].FundsWithdrawal == nil {
 		t.Fatal("input[2] must be FundsWithdrawal")
 	}
+	if pt.Inputs[3].Pure == nil {
+		t.Fatal("input[3] must be sender pure")
+	}
 
-	// Commands: redeem_funds, SplitCoins, TransferObjects (no MergeCoins)
-	if len(pt.Commands) != 3 {
-		t.Fatalf("expected 3 commands, got %d", len(pt.Commands))
+	// Commands: redeem_funds, SplitCoins, TransferObjects(split→recipient),
+	// TransferObjects(remainder→sender)
+	if len(pt.Commands) != 4 {
+		t.Fatalf("expected 4 commands, got %d", len(pt.Commands))
 	}
 	if pt.Commands[0].MoveCall == nil || string(pt.Commands[0].MoveCall.Function) != "redeem_funds" {
 		t.Fatal("cmd[0] must be redeem_funds")
@@ -297,7 +306,10 @@ func TestWithdrawalTransfer_WithoutCoins(t *testing.T) {
 		t.Fatal("cmd[1] must be SplitCoins")
 	}
 	if pt.Commands[2].TransferObjects == nil {
-		t.Fatal("cmd[2] must be TransferObjects")
+		t.Fatal("cmd[2] must be TransferObjects (split to recipient)")
+	}
+	if pt.Commands[3].TransferObjects == nil {
+		t.Fatal("cmd[3] must be TransferObjects (remainder to sender)")
 	}
 }
 
