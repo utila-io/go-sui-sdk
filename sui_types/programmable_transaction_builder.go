@@ -168,9 +168,6 @@ func (p *ProgrammableTransactionBuilder) Input(callArg CallArg) (Argument, error
 	}
 }
 
-// FundsWithdrawal adds a FundsWithdrawalArg input (SIP-58) and returns
-// the Argument that references it. The withdrawal input is always added
-// as a new, unique entry (like ForceSeparatePure).
 func (p *ProgrammableTransactionBuilder) FundsWithdrawal(arg FundsWithdrawalArg) Argument {
 	length := uint(len(p.Inputs))
 	key := BuilderArg{
@@ -178,6 +175,103 @@ func (p *ProgrammableTransactionBuilder) FundsWithdrawal(arg FundsWithdrawalArg)
 	}
 	i := p.insertFull(key, CallArg{FundsWithdrawal: &arg})
 	return Argument{Input: &i}
+}
+
+func (p *ProgrammableTransactionBuilder) WithdrawalTransfer(
+	recipient SuiAddress,
+	coins []*ObjectRef,
+	amount uint64,
+	withdrawalAmount uint64,
+	coinType move_types.TypeTag,
+) error {
+	recArg, err := p.Pure(recipient)
+	if err != nil {
+		return err
+	}
+	amtArg, err := p.Pure(amount)
+	if err != nil {
+		return err
+	}
+
+	withdrawalArg := p.FundsWithdrawal(FundsWithdrawalArg{
+		Reservation:  Reservation{MaxAmountU64: &withdrawalAmount},
+		TypeArg:      WithdrawalTypeArg{Balance: &coinType},
+		WithdrawFrom: WithdrawFrom{Sender: &lib.EmptyEnum{}},
+	})
+
+	redeemResult := p.Command(
+		Command{
+			MoveCall: &ProgrammableMoveCall{
+				Package:       Sui2FrameworkID(),
+				Module:        "coin",
+				Function:      "redeem_funds",
+				TypeArguments: []move_types.TypeTag{coinType},
+				Arguments:     []Argument{withdrawalArg},
+			},
+		},
+	)
+
+	var sourceCoin Argument
+	if len(coins) > 0 {
+		sourceCoin, err = p.Obj(
+			ObjectArg{
+				ImmOrOwnedObject: coins[0],
+			},
+		)
+		if err != nil {
+			return err
+		}
+		var mergeSources []Argument
+		for _, c := range coins[1:] {
+			coinArg, err := p.Obj(
+				ObjectArg{
+					ImmOrOwnedObject: c,
+				},
+			)
+			if err != nil {
+				return err
+			}
+			mergeSources = append(mergeSources, coinArg)
+		}
+		mergeSources = append(mergeSources, redeemResult)
+		p.Command(
+			Command{
+				MergeCoins: &struct {
+					Argument  Argument
+					Arguments []Argument
+				}{Argument: sourceCoin, Arguments: mergeSources},
+			},
+		)
+	} else {
+		sourceCoin = redeemResult
+	}
+
+	splitResult := p.Command(
+		Command{
+			SplitCoins: &struct {
+				Argument  Argument
+				Arguments []Argument
+			}{Argument: sourceCoin, Arguments: []Argument{amtArg}},
+		},
+	)
+	if splitResult.Result == nil {
+		return errors.New("self.command should always give a Argument::Result")
+	}
+	splitCoin := Argument{
+		NestedResult: &struct {
+			Result1 uint16
+			Result2 uint16
+		}{Result1: *splitResult.Result, Result2: 0},
+	}
+	p.Command(
+		Command{
+			TransferObjects: &struct {
+				Arguments []Argument
+				Argument  Argument
+			}{Arguments: []Argument{splitCoin}, Argument: recArg},
+		},
+	)
+	return nil
 }
 
 func (p *ProgrammableTransactionBuilder) MakeObjList(objs []ObjectArg) (Argument, error) {

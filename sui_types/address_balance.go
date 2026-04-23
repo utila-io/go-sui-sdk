@@ -10,7 +10,6 @@ import (
 	"github.com/utila-io/go-sui-sdk/move_types"
 )
 
-// ParseCoinTypeTag parses a coin type string like "0x2::sui::SUI" into a move_types.TypeTag.
 func ParseCoinTypeTag(coinType string) (move_types.TypeTag, error) {
 	parts := strings.Split(coinType, "::")
 	if len(parts) != 3 {
@@ -44,8 +43,6 @@ func ParseCoinTypeTag(coinType string) (move_types.TypeTag, error) {
 	}, nil
 }
 
-// RandomUint32 returns a cryptographically random uint32, suitable for use as
-// a ValidDuring nonce.
 func RandomUint32() (uint32, error) {
 	var buf [4]byte
 	if _, err := rand.Read(buf[:]); err != nil {
@@ -54,15 +51,12 @@ func RandomUint32() (uint32, error) {
 	return binary.LittleEndian.Uint32(buf[:]), nil
 }
 
-// Sui2FrameworkID returns the object ID of the Sui framework package (0x2).
 func Sui2FrameworkID() ObjectID {
 	var id ObjectID
 	id[len(id)-1] = 0x02
 	return id
 }
 
-// HexToChainIdentifier parses a hex chain identifier string (e.g. "4c78adac")
-// into the [32]byte format required by ValidDuringExpiration.
 func HexToChainIdentifier(hexStr string) ([32]byte, error) {
 	var result [32]byte
 	if hexStr == "" {
