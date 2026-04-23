@@ -26,8 +26,12 @@ func TestHexToChainIdentifier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if chain[28] != 0x4c || chain[29] != 0x78 || chain[30] != 0xad || chain[31] != 0xac {
-		t.Fatalf("unexpected chain bytes: %x", chain)
+	if len(chain) != 32 {
+		t.Fatalf("expected 32 bytes, got %d", len(chain))
+	}
+	// First 4 bytes of testnet genesis digest should be 4c78adac
+	if chain[0] != 0x4c || chain[1] != 0x78 || chain[2] != 0xad || chain[3] != 0xac {
+		t.Fatalf("unexpected chain bytes prefix: %x", chain[:4])
 	}
 }
 

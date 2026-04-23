@@ -31,12 +31,15 @@ func (t TransactionExpiration) IsBcsEnum() {
 
 }
 
+// ValidDuringExpiration corresponds to TransactionExpiration::ValidDuring (SIP-58).
+// Chain is a length-prefixed byte vector (33 bytes in BCS: 0x20 prefix + 32 bytes)
+// matching Sui's ChainIdentifier(CheckpointDigest(Digest)) encoding.
 type ValidDuringExpiration struct {
-	MinEpoch     *uint64  `bcs:"optional"`
-	MaxEpoch     *uint64  `bcs:"optional"`
-	MinTimestamp *uint64  `bcs:"optional"`
-	MaxTimestamp *uint64  `bcs:"optional"`
-	Chain        [32]byte
+	MinEpoch     *uint64 `bcs:"optional"`
+	MaxEpoch     *uint64 `bcs:"optional"`
+	MinTimestamp *uint64 `bcs:"optional"`
+	MaxTimestamp *uint64 `bcs:"optional"`
+	Chain        []byte
 	Nonce        uint32
 }
 

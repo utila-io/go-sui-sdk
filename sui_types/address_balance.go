@@ -7,7 +7,13 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/btcsuite/btcutil/base58"
 	"github.com/utila-io/go-sui-sdk/move_types"
+)
+
+const (
+	MainnetGenesisBase58 = "4btiuiMPvEENsttpZC7CZ53DruC3MAgfznDbASZ7DR6S"
+	TestnetGenesisBase58 = "69WiPg3DAQiwdxfncX6wYQ2siKwAe6L9BZthQea3JNMD"
 )
 
 func ParseCoinTypeTag(coinType string) (move_types.TypeTag, error) {
@@ -57,19 +63,44 @@ func Sui2FrameworkID() ObjectID {
 	return id
 }
 
-func HexToChainIdentifier(hexStr string) ([32]byte, error) {
-	var result [32]byte
+// HexToChainIdentifier resolves a short hex chain ID (e.g. "35834a8a") to the
+// full 32-byte genesis checkpoint digest used as ChainIdentifier in BCS.
+// Known networks (mainnet, testnet) are resolved via their genesis Base58 digests.
+func HexToChainIdentifier(hexStr string) ([]byte, error) {
 	if hexStr == "" {
-		return result, fmt.Errorf("chain identifier is empty")
+		return nil, fmt.Errorf("chain identifier is empty")
 	}
 	hexStr = strings.TrimPrefix(hexStr, "0x")
+
+	knownChains := map[string]string{
+		"35834a8a": MainnetGenesisBase58,
+		"4c78adac": TestnetGenesisBase58,
+	}
+	if b58, ok := knownChains[hexStr]; ok {
+		return Base58ToChainIdentifier(b58)
+	}
+
 	b, err := hex.DecodeString(hexStr)
 	if err != nil {
-		return result, fmt.Errorf("decoding chain identifier hex: %w", err)
+		return nil, fmt.Errorf("decoding chain identifier hex: %w", err)
 	}
-	if len(b) > 32 {
-		return result, fmt.Errorf("chain identifier too long: %d bytes", len(b))
+	if len(b) != 32 {
+		return nil, fmt.Errorf(
+			"unknown short chain ID %q; provide the full 32-byte hex or Base58 genesis digest",
+			hexStr,
+		)
 	}
-	copy(result[32-len(b):], b)
-	return result, nil
+	return b, nil
+}
+
+// Base58ToChainIdentifier decodes a Base58-encoded genesis checkpoint digest
+// into the 32-byte chain identifier used in ValidDuring expiration.
+func Base58ToChainIdentifier(b58 string) ([]byte, error) {
+	decoded := base58.Decode(b58)
+	if len(decoded) != 32 {
+		return nil, fmt.Errorf(
+			"Base58 chain identifier decodes to %d bytes, expected 32", len(decoded),
+		)
+	}
+	return decoded, nil
 }
