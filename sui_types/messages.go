@@ -1,9 +1,9 @@
 package sui_types
 
 import (
-	"github.com/coming-chat/go-sui/v2/lib"
-	"github.com/coming-chat/go-sui/v2/move_types"
-	"github.com/coming-chat/go-sui/v2/sui_protocol"
+	"github.com/utila-io/go-sui-sdk/lib"
+	"github.com/utila-io/go-sui-sdk/move_types"
+	"github.com/utila-io/go-sui-sdk/sui_protocol"
 )
 
 type TransactionData struct {

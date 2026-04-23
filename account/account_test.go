@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/coming-chat/go-sui/v2/sui_types"
+	"github.com/utila-io/go-sui-sdk/sui_types"
 	"github.com/stretchr/testify/require"
 )
 
