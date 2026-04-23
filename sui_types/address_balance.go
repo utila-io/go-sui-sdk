@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/coming-chat/go-sui/v2/move_types"
+	"github.com/utila-io/go-sui-sdk/move_types"
 )
 
 // ParseCoinTypeTag parses a coin type string like "0x2::sui::SUI" into a move_types.TypeTag.

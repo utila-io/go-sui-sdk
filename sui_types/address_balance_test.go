@@ -3,8 +3,8 @@ package sui_types
 import (
 	"testing"
 
-	"github.com/coming-chat/go-sui/v2/lib"
-	"github.com/coming-chat/go-sui/v2/move_types"
+	"github.com/utila-io/go-sui-sdk/lib"
+	"github.com/utila-io/go-sui-sdk/move_types"
 	"github.com/fardream/go-bcs/bcs"
 )
 

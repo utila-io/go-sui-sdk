@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/coming-chat/go-sui/v2/account"
-	"github.com/coming-chat/go-sui/v2/types"
+	"github.com/utila-io/go-sui-sdk/account"
+	"github.com/utila-io/go-sui-sdk/types"
 	"github.com/stretchr/testify/require"
 )
 
