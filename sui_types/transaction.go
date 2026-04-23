@@ -40,6 +40,33 @@ func NewProgrammable(
 	return NewProgrammableAllowSponsor(sender, gasPayment, pt, gasBudget, gasPrice, sender)
 }
 
+// NewProgrammableWithExpiration creates a ProgrammableTransaction with a custom
+// TransactionExpiration. Use this for SIP-58 transactions that require ValidDuring.
+func NewProgrammableWithExpiration(
+	sender SuiAddress,
+	gasPayment []*ObjectRef,
+	pt ProgrammableTransaction,
+	gasBudget uint64,
+	gasPrice uint64,
+	expiration TransactionExpiration,
+) TransactionData {
+	return TransactionData{
+		V1: &TransactionDataV1{
+			Kind: TransactionKind{
+				ProgrammableTransaction: &pt,
+			},
+			Sender: sender,
+			GasData: GasData{
+				Price:   gasPrice,
+				Owner:   sender,
+				Payment: gasPayment,
+				Budget:  gasBudget,
+			},
+			Expiration: expiration,
+		},
+	}
+}
+
 func newWithGasCoinsAllowSponsor(
 	kind TransactionKind,
 	sender SuiAddress,

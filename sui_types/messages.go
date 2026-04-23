@@ -22,11 +22,23 @@ type TransactionDataV1 struct {
 }
 
 type TransactionExpiration struct {
-	None  *lib.EmptyEnum
-	Epoch *EpochId
+	None        *lib.EmptyEnum
+	Epoch       *EpochId
+	ValidDuring *ValidDuringExpiration
 }
 
 func (t TransactionExpiration) IsBcsEnum() {
+}
+
+// ValidDuringExpiration corresponds to TransactionExpiration::ValidDuring (SIP-58).
+// Required for address-balance gas payments where GasData.Payment is empty.
+type ValidDuringExpiration struct {
+	MinEpoch     *uint64  `bcs:"optional"`
+	MaxEpoch     *uint64  `bcs:"optional"`
+	MinTimestamp *uint64  `bcs:"optional"`
+	MaxTimestamp *uint64  `bcs:"optional"`
+	Chain        [32]byte
+	Nonce        uint32
 }
 
 type GasData struct {
@@ -190,12 +202,52 @@ type GenesisObject struct {
 }
 
 type CallArg struct {
-	Pure   *[]byte
-	Object *ObjectArg
+	Pure            *[]byte
+	Object          *ObjectArg
+	FundsWithdrawal *FundsWithdrawalArg
 }
 
 func (c CallArg) IsBcsEnum() {
 }
+
+// FundsWithdrawalArg is the BCS payload for CallArg variant 2 (SIP-58).
+// It instructs the validator to reserve funds from an address balance.
+type FundsWithdrawalArg struct {
+	Reservation  Reservation
+	TypeArg      WithdrawalTypeArg
+	WithdrawFrom WithdrawFrom
+}
+
+// FundsWithdrawalFromSender creates a FundsWithdrawalArg that withdraws
+// the given amount of the specified coin type from the transaction sender.
+func FundsWithdrawalFromSender(amount uint64, coinTypeTag move_types.TypeTag) FundsWithdrawalArg {
+	return FundsWithdrawalArg{
+		Reservation:  Reservation{MaxAmountU64: &amount},
+		TypeArg:      WithdrawalTypeArg{Balance: &coinTypeTag},
+		WithdrawFrom: WithdrawFrom{Sender: &lib.EmptyEnum{}},
+	}
+}
+
+// Reservation specifies how much to withdraw. BCS enum: variant 0 = MaxAmountU64.
+type Reservation struct {
+	MaxAmountU64 *uint64
+}
+
+func (Reservation) IsBcsEnum() {}
+
+// WithdrawalTypeArg specifies the asset type. BCS enum: variant 0 = Balance.
+type WithdrawalTypeArg struct {
+	Balance *move_types.TypeTag
+}
+
+func (WithdrawalTypeArg) IsBcsEnum() {}
+
+// WithdrawFrom specifies who authorises the withdrawal. BCS enum: variant 0 = Sender.
+type WithdrawFrom struct {
+	Sender *lib.EmptyEnum
+}
+
+func (WithdrawFrom) IsBcsEnum() {}
 
 type ObjectArg struct {
 	ImmOrOwnedObject *ObjectRef

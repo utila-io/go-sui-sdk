@@ -161,9 +161,23 @@ func (p *ProgrammableTransactionBuilder) Input(callArg CallArg) (Argument, error
 		return p.pureBytes(*callArg.Pure, false), nil
 	case callArg.Object != nil:
 		return p.Obj(*callArg.Object)
+	case callArg.FundsWithdrawal != nil:
+		return p.FundsWithdrawal(*callArg.FundsWithdrawal), nil
 	default:
 		return Argument{}, errors.New("this callArg is nil")
 	}
+}
+
+// FundsWithdrawal adds a FundsWithdrawalArg input (SIP-58) and returns
+// the Argument that references it. The withdrawal input is always added
+// as a new, unique entry (like ForceSeparatePure).
+func (p *ProgrammableTransactionBuilder) FundsWithdrawal(arg FundsWithdrawalArg) Argument {
+	length := uint(len(p.Inputs))
+	key := BuilderArg{
+		ForcedNonUniquePure: &length,
+	}
+	i := p.insertFull(key, CallArg{FundsWithdrawal: &arg})
+	return Argument{Input: &i}
 }
 
 func (p *ProgrammableTransactionBuilder) MakeObjList(objs []ObjectArg) (Argument, error) {
