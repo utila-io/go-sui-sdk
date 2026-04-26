@@ -1,8 +1,6 @@
 package sui_types
 
 import (
-	"crypto/rand"
-	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -11,29 +9,40 @@ import (
 	"github.com/utila-io/go-sui-sdk/move_types"
 )
 
-const (
-	MainnetGenesisBase58 = "4btiuiMPvEENsttpZC7CZ53DruC3MAgfznDbASZ7DR6S"
-	TestnetGenesisBase58 = "69WiPg3DAQiwdxfncX6wYQ2siKwAe6L9BZthQea3JNMD"
-)
+// NormalizeCoinAddress pads a package-address hex segment from a coin type string
+// (with or without a "0x" prefix) to MovePackageAddressHexLength hex characters.
+func NormalizeCoinAddress(addrHex string) string {
+	addrHex = strings.TrimPrefix(addrHex, "0x")
+	if len(addrHex) < MovePackageAddressHexLength {
+		return strings.Repeat("0", MovePackageAddressHexLength-len(addrHex)) + addrHex
+	}
+	return addrHex
+}
 
 func ParseCoinTypeTag(coinType string) (move_types.TypeTag, error) {
-	parts := strings.Split(coinType, "::")
+	parts := strings.Split(coinType, CoinTypeModuleDelimiter)
 	if len(parts) != 3 {
-		return move_types.TypeTag{}, fmt.Errorf("invalid coin type: %s", coinType)
+		return move_types.TypeTag{}, &InvalidCoinTypeError{
+			CoinType: coinType,
+			Msg:      "expected '<address>::<module>::<name>'",
+		}
 	}
 
-	addrHex := strings.TrimPrefix(parts[0], "0x")
-	if len(addrHex) < 64 {
-		addrHex = strings.Repeat("0", 64-len(addrHex)) + addrHex
-	}
+	addrHex := NormalizeCoinAddress(parts[0])
 	addrBytes, err := hex.DecodeString(addrHex)
 	if err != nil {
-		return move_types.TypeTag{}, fmt.Errorf("parsing coin type address: %w", err)
+		return move_types.TypeTag{}, &InvalidCoinTypeError{
+			CoinType: coinType,
+			Msg:      fmt.Sprintf("decoding address hex: %v", err),
+		}
 	}
-	if len(addrBytes) != 32 {
-		return move_types.TypeTag{}, fmt.Errorf(
-			"parsing coin type address: expected 32 bytes, got %d", len(addrBytes),
-		)
+	if len(addrBytes) != AccountAddressSize {
+		return move_types.TypeTag{}, &InvalidCoinTypeError{
+			CoinType: coinType,
+			Msg: fmt.Sprintf(
+				"address decodes to %d bytes, expected %d", len(addrBytes), AccountAddressSize,
+			),
+		}
 	}
 
 	var addr move_types.AccountAddress
@@ -49,20 +58,6 @@ func ParseCoinTypeTag(coinType string) (move_types.TypeTag, error) {
 	}, nil
 }
 
-func RandomUint32() (uint32, error) {
-	var buf [4]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return 0, fmt.Errorf("generating random nonce: %w", err)
-	}
-	return binary.LittleEndian.Uint32(buf[:]), nil
-}
-
-func Sui2FrameworkID() ObjectID {
-	var id ObjectID
-	id[len(id)-1] = 0x02
-	return id
-}
-
 // HexToChainIdentifier resolves a short hex chain ID (e.g. "35834a8a") to the
 // full 32-byte genesis checkpoint digest used as ChainIdentifier in BCS.
 // Known networks (mainnet, testnet) are resolved via their genesis Base58 digests.
@@ -72,11 +67,7 @@ func HexToChainIdentifier(hexStr string) ([]byte, error) {
 	}
 	hexStr = strings.TrimPrefix(hexStr, "0x")
 
-	knownChains := map[string]string{
-		"35834a8a": MainnetGenesisBase58,
-		"4c78adac": TestnetGenesisBase58,
-	}
-	if b58, ok := knownChains[hexStr]; ok {
+	if b58, ok := genesisCheckpointBase58ByShortHex[hexStr]; ok {
 		return Base58ToChainIdentifier(b58)
 	}
 
@@ -84,7 +75,7 @@ func HexToChainIdentifier(hexStr string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decoding chain identifier hex: %w", err)
 	}
-	if len(b) != 32 {
+	if len(b) != ChainIdentifierDigestSize {
 		return nil, fmt.Errorf(
 			"unknown short chain ID %q; provide the full 32-byte hex or Base58 genesis digest",
 			hexStr,
@@ -97,9 +88,10 @@ func HexToChainIdentifier(hexStr string) ([]byte, error) {
 // into the 32-byte chain identifier used in ValidDuring expiration.
 func Base58ToChainIdentifier(b58 string) ([]byte, error) {
 	decoded := base58.Decode(b58)
-	if len(decoded) != 32 {
+	if len(decoded) != ChainIdentifierDigestSize {
 		return nil, fmt.Errorf(
-			"Base58 chain identifier decodes to %d bytes, expected 32", len(decoded),
+			"Base58 chain identifier decodes to %d bytes, expected %d",
+			len(decoded), ChainIdentifierDigestSize,
 		)
 	}
 	return decoded, nil

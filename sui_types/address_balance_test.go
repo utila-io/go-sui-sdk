@@ -1,11 +1,12 @@
 package sui_types
 
 import (
+	"errors"
 	"testing"
 
+	"github.com/fardream/go-bcs/bcs"
 	"github.com/utila-io/go-sui-sdk/lib"
 	"github.com/utila-io/go-sui-sdk/move_types"
-	"github.com/fardream/go-bcs/bcs"
 )
 
 func TestParseCoinTypeTag(t *testing.T) {
@@ -18,6 +19,20 @@ func TestParseCoinTypeTag(t *testing.T) {
 	}
 	if tag.Struct.Module != "sui" || tag.Struct.Name != "SUI" {
 		t.Fatalf("unexpected tag: %+v", tag.Struct)
+	}
+}
+
+func TestParseCoinTypeTag_invalidWrappedError(t *testing.T) {
+	_, err := ParseCoinTypeTag("not-a-coin-type")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !IsInvalidCoinTypeError(err) {
+		t.Fatalf("expected IsInvalidCoinTypeError, got %v", err)
+	}
+	var inv *InvalidCoinTypeError
+	if !errors.As(err, &inv) {
+		t.Fatalf("expected errors.As to *InvalidCoinTypeError: %v", err)
 	}
 }
 
@@ -127,7 +142,7 @@ func TestFullTransactionDataWithSIP58BCSRoundTrip(t *testing.T) {
 		},
 		Commands: []Command{
 			{MoveCall: &ProgrammableMoveCall{
-				Package:       Sui2FrameworkID(),
+				Package:       Sui2FrameworkID,
 				Module:        move_types.Identifier("coin"),
 				Function:      move_types.Identifier("redeem_funds"),
 				TypeArguments: []move_types.TypeTag{tag},
@@ -261,6 +276,16 @@ func TestWithdrawalTransfer_WithCoins(t *testing.T) {
 	}
 	if decoded.V1.Kind.ProgrammableTransaction.Inputs[2].FundsWithdrawal == nil {
 		t.Fatal("decoded input[2] must be FundsWithdrawal")
+	}
+}
+
+func TestWithdrawalTransfer_zeroWithdrawalRejected(t *testing.T) {
+	var recipient SuiAddress
+	coinType, _ := ParseCoinTypeTag("0x2::sui::SUI")
+	ptb := NewProgrammableTransactionBuilder()
+	err := ptb.WithdrawalTransfer(recipient, nil, 1, 0, coinType)
+	if err == nil {
+		t.Fatal("expected error for withdrawalAmount == 0")
 	}
 }
 

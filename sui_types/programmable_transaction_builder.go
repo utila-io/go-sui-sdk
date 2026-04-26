@@ -3,10 +3,10 @@ package sui_types
 import (
 	"errors"
 	"fmt"
-	"github.com/utila-io/go-sui-sdk/lib"
-	"github.com/utila-io/go-sui-sdk/move_types"
 	"github.com/fardream/go-bcs/bcs"
 	"github.com/mitchellh/hashstructure/v2"
+	"github.com/utila-io/go-sui-sdk/lib"
+	"github.com/utila-io/go-sui-sdk/move_types"
 	"strconv"
 )
 
@@ -162,13 +162,15 @@ func (p *ProgrammableTransactionBuilder) Input(callArg CallArg) (Argument, error
 	case callArg.Object != nil:
 		return p.Obj(*callArg.Object)
 	case callArg.FundsWithdrawal != nil:
-		return p.FundsWithdrawal(*callArg.FundsWithdrawal), nil
+		return CreateFundsWithdrawalArgument(p, *callArg.FundsWithdrawal), nil
 	default:
 		return Argument{}, errors.New("this callArg is nil")
 	}
 }
 
-func (p *ProgrammableTransactionBuilder) FundsWithdrawal(arg FundsWithdrawalArg) Argument {
+// CreateFundsWithdrawalArgument registers a FundsWithdrawal CallArg on the builder
+// and returns its Input argument index.
+func CreateFundsWithdrawalArgument(p *ProgrammableTransactionBuilder, arg FundsWithdrawalArg) Argument {
 	length := uint(len(p.Inputs))
 	key := BuilderArg{
 		ForcedNonUniquePure: &length,
@@ -184,6 +186,9 @@ func (p *ProgrammableTransactionBuilder) WithdrawalTransfer(
 	withdrawalAmount uint64,
 	coinType move_types.TypeTag,
 ) error {
+	if withdrawalAmount == 0 {
+		return fmt.Errorf("withdrawalAmount must be non-zero")
+	}
 	recArg, err := p.Pure(recipient)
 	if err != nil {
 		return err
@@ -193,7 +198,7 @@ func (p *ProgrammableTransactionBuilder) WithdrawalTransfer(
 		return err
 	}
 
-	withdrawalArg := p.FundsWithdrawal(FundsWithdrawalArg{
+	withdrawalArg := CreateFundsWithdrawalArgument(p, FundsWithdrawalArg{
 		Reservation:  Reservation{MaxAmountU64: &withdrawalAmount},
 		TypeArg:      WithdrawalTypeArg{Balance: &coinType},
 		WithdrawFrom: WithdrawFrom{Sender: &lib.EmptyEnum{}},
@@ -202,7 +207,7 @@ func (p *ProgrammableTransactionBuilder) WithdrawalTransfer(
 	redeemResult := p.Command(
 		Command{
 			MoveCall: &ProgrammableMoveCall{
-				Package:       Sui2FrameworkID(),
+				Package:       Sui2FrameworkID,
 				Module:        "coin",
 				Function:      "redeem_funds",
 				TypeArguments: []move_types.TypeTag{coinType},
@@ -236,39 +241,41 @@ func (p *ProgrammableTransactionBuilder) WithdrawalTransfer(
 		mergeSources = append(mergeSources, redeemResult)
 		p.Command(
 			Command{
-				MergeCoins: &struct {
-					Argument  Argument
-					Arguments []Argument
-				}{Argument: sourceCoin, Arguments: mergeSources},
+				MergeCoins: &MergeCoinsCommand{Argument: sourceCoin, Arguments: mergeSources},
 			},
 		)
 	} else {
 		sourceCoin = redeemResult
 	}
 
+	return p.splitSingleCoinAmountAndTransfer(sourceCoin, recArg, amtArg)
+}
+
+func (p *ProgrammableTransactionBuilder) splitSingleCoinAmountAndTransfer(
+	sourceCoin Argument,
+	recipientArg Argument,
+	amountPure Argument,
+) error {
 	splitResult := p.Command(
 		Command{
-			SplitCoins: &struct {
-				Argument  Argument
-				Arguments []Argument
-			}{Argument: sourceCoin, Arguments: []Argument{amtArg}},
+			SplitCoins: &SplitCoinsCommand{
+				Argument:  sourceCoin,
+				Arguments: []Argument{amountPure},
+			},
 		},
 	)
 	if splitResult.Result == nil {
 		return errors.New("self.command should always give a Argument::Result")
 	}
 	splitCoin := Argument{
-		NestedResult: &struct {
-			Result1 uint16
-			Result2 uint16
-		}{Result1: *splitResult.Result, Result2: 0},
+		NestedResult: &NestedResultArgument{Result1: *splitResult.Result, Result2: 0},
 	}
 	p.Command(
 		Command{
-			TransferObjects: &struct {
-				Arguments []Argument
-				Argument  Argument
-			}{Arguments: []Argument{splitCoin}, Argument: recArg},
+			TransferObjects: &TransferObjectsCommand{
+				Arguments: []Argument{splitCoin},
+				Argument:  recipientArg,
+			},
 		},
 	)
 	return nil
@@ -324,10 +331,7 @@ func (p *ProgrammableTransactionBuilder) TransferObject(
 	}
 	p.Command(
 		Command{
-			TransferObjects: &struct {
-				Arguments []Argument
-				Argument  Argument
-			}{Arguments: objArgs, Argument: recArg},
+			TransferObjects: &TransferObjectsCommand{Arguments: objArgs, Argument: recArg},
 		},
 	)
 	return nil
@@ -350,28 +354,20 @@ func (p *ProgrammableTransactionBuilder) TransferSui(recipient SuiAddress, amoun
 		}
 		coinArg = p.Command(
 			Command{
-				SplitCoins: &struct {
-					Argument  Argument
-					Arguments []Argument
-				}{
+				SplitCoins: &SplitCoinsCommand{
 					Argument: Argument{
 						GasCoin: &lib.EmptyEnum{},
-					}, Arguments: []Argument{
-						amtArg,
 					},
+					Arguments: []Argument{amtArg},
 				},
 			},
 		)
 	}
 	p.Command(
 		Command{
-			TransferObjects: &struct {
-				Arguments []Argument
-				Argument  Argument
-			}{
-				Arguments: []Argument{
-					coinArg,
-				}, Argument: recArg,
+			TransferObjects: &TransferObjectsCommand{
+				Arguments: []Argument{coinArg},
+				Argument:  recArg,
 			},
 		},
 	)
@@ -425,10 +421,10 @@ func (p *ProgrammableTransactionBuilder) PayAllSui(recipient SuiAddress) error {
 	}
 	p.Command(
 		Command{
-			TransferObjects: &struct {
-				Arguments []Argument
-				Argument  Argument
-			}{Arguments: []Argument{{GasCoin: &lib.EmptyEnum{}}}, Argument: recArg},
+			TransferObjects: &TransferObjectsCommand{
+				Arguments: []Argument{{GasCoin: &lib.EmptyEnum{}}},
+				Argument:  recArg,
+			},
 		},
 	)
 	return nil
@@ -466,10 +462,7 @@ func (p *ProgrammableTransactionBuilder) Pay(
 	if len(mergeArgs) != 0 {
 		p.Command(
 			Command{
-				MergeCoins: &struct {
-					Argument  Argument
-					Arguments []Argument
-				}{Argument: coinArg, Arguments: mergeArgs},
+				MergeCoins: &MergeCoinsCommand{Argument: coinArg, Arguments: mergeArgs},
 			},
 		)
 	}
@@ -508,10 +501,7 @@ func (p *ProgrammableTransactionBuilder) PayMulInternal(
 	}
 	splitCoinResult := p.Command(
 		Command{
-			SplitCoins: &struct {
-				Argument  Argument
-				Arguments []Argument
-			}{Argument: coin, Arguments: amtArgs},
+			SplitCoins: &SplitCoinsCommand{Argument: coin, Arguments: amtArgs},
 		},
 	)
 	if splitCoinResult.Result == nil {
@@ -525,19 +515,16 @@ func (p *ProgrammableTransactionBuilder) PayMulInternal(
 		var coins []Argument
 		for _, j := range recipientMap[v] {
 			sdCoin := Argument{
-				NestedResult: &struct {
-					Result1 uint16
-					Result2 uint16
-				}{Result1: *splitCoinResult.Result, Result2: uint16(j)},
+				NestedResult: &NestedResultArgument{
+					Result1: *splitCoinResult.Result,
+					Result2: uint16(j),
+				},
 			}
 			coins = append(coins, sdCoin)
 		}
 		p.Command(
 			Command{
-				TransferObjects: &struct {
-					Arguments []Argument
-					Argument  Argument
-				}{Arguments: coins, Argument: recArg},
+				TransferObjects: &TransferObjectsCommand{Arguments: coins, Argument: recArg},
 			},
 		)
 	}

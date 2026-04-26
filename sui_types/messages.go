@@ -21,6 +21,7 @@ type TransactionDataV1 struct {
 	Expiration TransactionExpiration
 }
 
+// TransactionExpiration is a BCS oneof (enum): at most one of None, Epoch, or ValidDuring is non-nil.
 type TransactionExpiration struct {
 	None        *lib.EmptyEnum
 	Epoch       *EpochId
@@ -71,21 +72,30 @@ type ProgrammableTransaction struct {
 	Commands []Command
 }
 
+// TransferObjectsCommand is the payload for Command.TransferObjects.
+type TransferObjectsCommand struct {
+	Arguments []Argument
+	Argument  Argument
+}
+
+// SplitCoinsCommand is the payload for Command.SplitCoins.
+type SplitCoinsCommand struct {
+	Argument  Argument
+	Arguments []Argument
+}
+
+// MergeCoinsCommand is the payload for Command.MergeCoins.
+type MergeCoinsCommand struct {
+	Argument  Argument
+	Arguments []Argument
+}
+
 type Command struct {
 	MoveCall        *ProgrammableMoveCall
-	TransferObjects *struct {
-		Arguments []Argument
-		Argument  Argument
-	}
-	SplitCoins *struct {
-		Argument  Argument
-		Arguments []Argument
-	}
-	MergeCoins *struct {
-		Argument  Argument
-		Arguments []Argument
-	}
-	Publish *struct {
+	TransferObjects *TransferObjectsCommand
+	SplitCoins      *SplitCoinsCommand
+	MergeCoins      *MergeCoinsCommand
+	Publish         *struct {
 		Bytes   [][]uint8
 		Objects []ObjectID
 	}
@@ -105,14 +115,17 @@ func (c Command) IsBcsEnum() {
 
 }
 
+// NestedResultArgument references one output of a multi-result command.
+type NestedResultArgument struct {
+	Result1 uint16
+	Result2 uint16
+}
+
 type Argument struct {
 	GasCoin      *lib.EmptyEnum
 	Input        *uint16
 	Result       *uint16
-	NestedResult *struct {
-		Result1 uint16
-		Result2 uint16
-	}
+	NestedResult *NestedResultArgument
 }
 
 func (a Argument) IsBcsEnum() {
