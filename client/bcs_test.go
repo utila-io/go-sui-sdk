@@ -4,12 +4,12 @@ import (
 	"context"
 	"testing"
 
-	"github.com/coming-chat/go-sui/v2/lib"
-	"github.com/coming-chat/go-sui/v2/sui_types"
-	"github.com/coming-chat/go-sui/v2/sui_types/sui_system_state"
-	"github.com/coming-chat/go-sui/v2/types"
 	"github.com/fardream/go-bcs/bcs"
 	"github.com/stretchr/testify/require"
+	"github.com/utila-io/go-sui-sdk/lib"
+	"github.com/utila-io/go-sui-sdk/sui_types"
+	"github.com/utila-io/go-sui-sdk/sui_types/sui_system_state"
+	"github.com/utila-io/go-sui-sdk/types"
 )
 
 func TestBCS_TransferObject(t *testing.T) {
@@ -249,10 +249,7 @@ func TestBCS_MoveCall(t *testing.T) {
 	require.NoError(t, err)
 	arg1 := ptb.Command(
 		sui_types.Command{
-			SplitCoins: &struct {
-				Argument  sui_types.Argument
-				Arguments []sui_types.Argument
-			}{
+			SplitCoins: &sui_types.SplitCoinsCommand{
 				Argument:  sui_types.Argument{GasCoin: &lib.EmptyEnum{}},
 				Arguments: []sui_types.Argument{amtArg},
 			},

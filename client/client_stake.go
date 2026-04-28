@@ -3,11 +3,11 @@ package client
 import (
 	"context"
 
-	"github.com/coming-chat/go-sui/v2/lib"
-	"github.com/coming-chat/go-sui/v2/sui_types"
-	"github.com/coming-chat/go-sui/v2/sui_types/sui_system_state"
-	"github.com/coming-chat/go-sui/v2/types"
 	"github.com/fardream/go-bcs/bcs"
+	"github.com/utila-io/go-sui-sdk/lib"
+	"github.com/utila-io/go-sui-sdk/sui_types"
+	"github.com/utila-io/go-sui-sdk/sui_types/sui_system_state"
+	"github.com/utila-io/go-sui-sdk/types"
 )
 
 func (c *Client) GetLatestSuiSystemState(ctx context.Context) (*types.SuiSystemStateSummary, error) {
@@ -73,10 +73,7 @@ func BCS_RequestAddStake(
 	}
 	arg1 := ptb.Command(
 		sui_types.Command{
-			SplitCoins: &struct {
-				Argument  sui_types.Argument
-				Arguments []sui_types.Argument
-			}{
+			SplitCoins: &sui_types.SplitCoinsCommand{
 				Argument:  sui_types.Argument{GasCoin: &lib.EmptyEnum{}},
 				Arguments: []sui_types.Argument{amtArg},
 			},

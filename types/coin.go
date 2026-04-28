@@ -2,7 +2,7 @@ package types
 
 import (
 	"errors"
-	"github.com/coming-chat/go-sui/v2/sui_types"
+	"github.com/utila-io/go-sui-sdk/sui_types"
 	"math/big"
 	"sort"
 )
@@ -43,10 +43,11 @@ func (c *Coin) IsSUI() bool {
 }
 
 type Balance struct {
-	CoinType        string                              `json:"coinType"`
-	CoinObjectCount uint64                              `json:"coinObjectCount"`
-	TotalBalance    SuiBigInt                           `json:"totalBalance"`
-	LockedBalance   map[SafeSuiBigInt[uint64]]SuiBigInt `json:"lockedBalance"`
+	CoinType              string                              `json:"coinType"`
+	CoinObjectCount       uint64                              `json:"coinObjectCount"`
+	TotalBalance          SuiBigInt                           `json:"totalBalance"`
+	LockedBalance         map[SafeSuiBigInt[uint64]]SuiBigInt `json:"lockedBalance"`
+	FundsInAddressBalance SuiBigInt                           `json:"fundsInAddressBalance"`
 }
 
 type Supply struct {

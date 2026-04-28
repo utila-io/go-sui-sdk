@@ -1,9 +1,9 @@
 package sui_types
 
 import (
-	"github.com/coming-chat/go-sui/v2/lib"
-	"github.com/coming-chat/go-sui/v2/move_types"
-	"github.com/coming-chat/go-sui/v2/sui_protocol"
+	"github.com/utila-io/go-sui-sdk/lib"
+	"github.com/utila-io/go-sui-sdk/move_types"
+	"github.com/utila-io/go-sui-sdk/sui_protocol"
 )
 
 type TransactionData struct {
@@ -21,12 +21,27 @@ type TransactionDataV1 struct {
 	Expiration TransactionExpiration
 }
 
+// TransactionExpiration is a BCS oneof (enum): at most one of None, Epoch, or ValidDuring is non-nil.
 type TransactionExpiration struct {
-	None  *lib.EmptyEnum
-	Epoch *EpochId
+	None        *lib.EmptyEnum
+	Epoch       *EpochId
+	ValidDuring *ValidDuringExpiration
 }
 
 func (t TransactionExpiration) IsBcsEnum() {
+
+}
+
+// ValidDuringExpiration corresponds to TransactionExpiration::ValidDuring (SIP-58).
+// Chain is a length-prefixed byte vector (33 bytes in BCS: 0x20 prefix + 32 bytes)
+// matching Sui's ChainIdentifier(CheckpointDigest(Digest)) encoding.
+type ValidDuringExpiration struct {
+	MinEpoch     *uint64 `bcs:"optional"`
+	MaxEpoch     *uint64 `bcs:"optional"`
+	MinTimestamp *uint64 `bcs:"optional"`
+	MaxTimestamp *uint64 `bcs:"optional"`
+	Chain        []byte
+	Nonce        uint32
 }
 
 type GasData struct {
@@ -57,21 +72,30 @@ type ProgrammableTransaction struct {
 	Commands []Command
 }
 
+// TransferObjectsCommand is the payload for Command.TransferObjects.
+type TransferObjectsCommand struct {
+	Arguments []Argument
+	Argument  Argument
+}
+
+// SplitCoinsCommand is the payload for Command.SplitCoins.
+type SplitCoinsCommand struct {
+	Argument  Argument
+	Arguments []Argument
+}
+
+// MergeCoinsCommand is the payload for Command.MergeCoins.
+type MergeCoinsCommand struct {
+	Argument  Argument
+	Arguments []Argument
+}
+
 type Command struct {
 	MoveCall        *ProgrammableMoveCall
-	TransferObjects *struct {
-		Arguments []Argument
-		Argument  Argument
-	}
-	SplitCoins *struct {
-		Argument  Argument
-		Arguments []Argument
-	}
-	MergeCoins *struct {
-		Argument  Argument
-		Arguments []Argument
-	}
-	Publish *struct {
+	TransferObjects *TransferObjectsCommand
+	SplitCoins      *SplitCoinsCommand
+	MergeCoins      *MergeCoinsCommand
+	Publish         *struct {
 		Bytes   [][]uint8
 		Objects []ObjectID
 	}
@@ -91,14 +115,17 @@ func (c Command) IsBcsEnum() {
 
 }
 
+// NestedResultArgument references one output of a multi-result command.
+type NestedResultArgument struct {
+	Result1 uint16
+	Result2 uint16
+}
+
 type Argument struct {
 	GasCoin      *lib.EmptyEnum
 	Input        *uint16
 	Result       *uint16
-	NestedResult *struct {
-		Result1 uint16
-		Result2 uint16
-	}
+	NestedResult *NestedResultArgument
 }
 
 func (a Argument) IsBcsEnum() {
@@ -190,11 +217,42 @@ type GenesisObject struct {
 }
 
 type CallArg struct {
-	Pure   *[]byte
-	Object *ObjectArg
+	Pure            *[]byte
+	Object          *ObjectArg
+	FundsWithdrawal *FundsWithdrawalArg
 }
 
 func (c CallArg) IsBcsEnum() {
+}
+
+type FundsWithdrawalArg struct {
+	Reservation  Reservation
+	TypeArg      WithdrawalTypeArg
+	WithdrawFrom WithdrawFrom
+}
+
+type Reservation struct {
+	MaxAmountU64 *uint64
+}
+
+func (Reservation) IsBcsEnum() {
+
+}
+
+type WithdrawalTypeArg struct {
+	Balance *move_types.TypeTag
+}
+
+func (WithdrawalTypeArg) IsBcsEnum() {
+
+}
+
+type WithdrawFrom struct {
+	Sender *lib.EmptyEnum
+}
+
+func (WithdrawFrom) IsBcsEnum() {
+
 }
 
 type ObjectArg struct {
