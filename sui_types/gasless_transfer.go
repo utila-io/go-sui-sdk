@@ -105,10 +105,6 @@ func (p *ProgrammableTransactionBuilder) redeemFunds(
 //
 // The change (possibly zero) returns to sender's address balance, so nothing survives as
 // an owned object. The helper trusts that coins+withdrawalAmount cover totalAmount.
-//
-// OPEN (UTILA-10259): multi-coin Case B and Case C use MergeCoins, whose gasless
-// eligibility is unconfirmed by Sui — don't wire them until confirmed; A and single-coin
-// B are the confirmed shapes.
 func (p *ProgrammableTransactionBuilder) GaslessTransfer(
 	sender SuiAddress,
 	recipient SuiAddress,
