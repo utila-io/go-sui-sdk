@@ -31,8 +31,8 @@ var allowedGaslessMoveCalls = map[string]bool{
 	"coin::send_funds":      true,
 }
 
-// assertOnlyGaslessCommands asserts every command is an allowed address-balance MoveCall,
-// MergeCoins, or SplitCoins — anything else (e.g. TransferObjects) leaks an owned object.
+// assertOnlyGaslessCommands fails on any command other than an allowed send_funds/redeem_funds
+// MoveCall, MergeCoins, or SplitCoins (e.g. a TransferObjects that would leak an owned object).
 func assertOnlyGaslessCommands(t *testing.T, pt ProgrammableTransaction) {
 	t.Helper()
 	for i, cmd := range pt.Commands {
@@ -61,10 +61,8 @@ func moveCallFn(t *testing.T, cmd Command) (module, function string) {
 	return string(cmd.MoveCall.Module), string(cmd.MoveCall.Function)
 }
 
-// Case A: address balance only — redeem a Balance<T> and send it straight to the
-// recipient. Exactly two MoveCalls (balance::redeem_funds, balance::send_funds),
-// one FundsWithdrawal input, and no Merge/Split/TransferObjects.
-func TestGaslessTransfer_CaseA_AddressBalanceOnly(t *testing.T) {
+// Address balance only — redeem + send, one FundsWithdrawal input, no merge/split.
+func TestGaslessTransfer_AddressBalanceOnly(t *testing.T) {
 	sender, recipient := testAddrs(t)
 	coinType, _ := ParseCoinTypeTag("0x2::sui::SUI")
 
@@ -96,9 +94,8 @@ func TestGaslessTransfer_CaseA_AddressBalanceOnly(t *testing.T) {
 	}
 }
 
-// Case B: coins only (no withdrawal). Two coins => MergeCoins, then SplitCoins and
-// two coin::send_funds (recipient + sender change). No redeem, no TransferObjects.
-func TestGaslessTransfer_CaseB_CoinsOnly_Merge(t *testing.T) {
+// Multiple coins, no withdrawal — merge, split, then two coin::send_funds (recipient + change).
+func TestGaslessTransfer_MultipleCoins_Merge(t *testing.T) {
 	sender, recipient := testAddrs(t)
 	coinType, _ := ParseCoinTypeTag("0x2::sui::SUI")
 
@@ -132,8 +129,8 @@ func TestGaslessTransfer_CaseB_CoinsOnly_Merge(t *testing.T) {
 	}
 }
 
-// Case B with a single coin: no MergeCoins needed, so SplitCoins + two send_funds.
-func TestGaslessTransfer_CaseB_SingleCoin_NoMerge(t *testing.T) {
+// Single coin, no withdrawal — no MergeCoins needed, so SplitCoins + two send_funds.
+func TestGaslessTransfer_SingleCoin_NoMerge(t *testing.T) {
 	sender, recipient := testAddrs(t)
 	coinType, _ := ParseCoinTypeTag("0x2::sui::SUI")
 
@@ -158,9 +155,8 @@ func TestGaslessTransfer_CaseB_SingleCoin_NoMerge(t *testing.T) {
 	assertOnlyGaslessCommands(t, pt)
 }
 
-// Case C: coins + address-balance shortfall. The shortfall is redeemed as a Coin<T>
-// (coin::redeem_funds) and merged with the coin object, then split and sent.
-func TestGaslessTransfer_CaseC_CoinsPlusWithdrawal(t *testing.T) {
+// Coins plus an address-balance shortfall — redeem the shortfall as a coin, merge, split, send.
+func TestGaslessTransfer_CoinsPlusWithdrawal(t *testing.T) {
 	sender, recipient := testAddrs(t)
 	coinType, _ := ParseCoinTypeTag("0x2::sui::SUI")
 
@@ -224,12 +220,11 @@ func TestGaslessTransfer_zeroAmountRejected(t *testing.T) {
 	}
 }
 
-func TestGaslessTransfer_caseAMismatchRejected(t *testing.T) {
+func TestGaslessTransfer_addressBalanceMismatchRejected(t *testing.T) {
 	sender, recipient := testAddrs(t)
 	coinType, _ := ParseCoinTypeTag("0x2::sui::SUI")
 	ptb := NewProgrammableTransactionBuilder()
-	// No coins but withdrawalAmount < totalAmount: there is no coin source for the
-	// remaining amount, so this must be rejected rather than silently underpaying.
+	// No coins and withdrawalAmount < totalAmount: nothing covers the rest, so reject.
 	if err := ptb.GaslessTransfer(sender, recipient, nil, 2_000_000, 1_000_000, coinType); err == nil {
 		t.Fatal("expected error when withdrawalAmount != totalAmount with no coins")
 	}
