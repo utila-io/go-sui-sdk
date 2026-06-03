@@ -11,7 +11,7 @@ import (
 // Gasless stablecoin transfers (Sui SIP-58 address balances): the PTB writes no owned
 // objects — every coin is destroyed into an address balance via send_funds — so it can
 // broadcast with gasBudget=0 and no gas payment. The shapes are unverified on-chain
-// pending a testnet DryRun (gasUsed=0).
+// pending a testnet DryRun (computationCost=0).
 
 // BalanceSendFunds appends balance::send_funds<T>, crediting balance to recipient's address balance.
 func (p *ProgrammableTransactionBuilder) BalanceSendFunds(
@@ -87,9 +87,11 @@ func (p *ProgrammableTransactionBuilder) redeemFunds(
 }
 
 // GaslessTransfer builds an output-object-free PTB moving totalAmount of coinType to
-// recipient. It prefers the sender's address balance and consumes coins only when
-// supplied, always routing funds (and any change) back into address balances so no owned
-// object survives. The caller guarantees coins + withdrawalAmount >= totalAmount.
+// recipient. With no coins it pays from the sender's address balance alone; otherwise it
+// consumes the supplied coins, redeems any shortfall from the address balance, and routes
+// the change back to the sender's balance so no owned object survives. The caller
+// guarantees coins + withdrawalAmount >= totalAmount. (The balance-vs-coins choice is the
+// caller's; see the backend's PickCoins.)
 func (p *ProgrammableTransactionBuilder) GaslessTransfer(
 	sender SuiAddress,
 	recipient SuiAddress,
@@ -116,7 +118,8 @@ func (p *ProgrammableTransactionBuilder) GaslessTransfer(
 		return err
 	}
 
-	// Coins supplied: gather them (plus any redeemed shortfall), merge, then split out the amount.
+	// Coins supplied: gather them (plus any redeemed shortfall), merge when there's more than
+	// one source, then split out the amount.
 	coinArgs := make([]Argument, 0, len(coins)+1)
 	for _, c := range coins {
 		coinArg, err := p.Obj(ObjectArg{ImmOrOwnedObject: c})
