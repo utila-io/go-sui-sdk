@@ -103,28 +103,71 @@ func (p *ProgrammableTransactionBuilder) GaslessTransfer(
 	if totalAmount == 0 {
 		return fmt.Errorf("totalAmount must be non-zero")
 	}
-
-	// No coins: pay entirely from the address balance.
 	if len(coins) == 0 {
-		if withdrawalAmount != totalAmount {
-			return fmt.Errorf(
-				"address-balance-only gasless transfer requires withdrawalAmount (%d) == totalAmount (%d)",
-				withdrawalAmount,
-				totalAmount,
-			)
-		}
-		balance := p.redeemFunds("balance", withdrawalAmount, coinType)
-		_, err := p.BalanceSendFunds(balance, recipient, coinType)
+		return p.gaslessTransferFromBalance(recipient, totalAmount, withdrawalAmount, coinType)
+	}
+	return p.gaslessTransferFromCoins(sender, recipient, coins, totalAmount, withdrawalAmount, coinType)
+}
+
+// gaslessTransferFromBalance pays the whole amount from the sender's settled address
+// balance: redeem a Balance<T> and credit it to the recipient (no coins involved).
+func (p *ProgrammableTransactionBuilder) gaslessTransferFromBalance(
+	recipient SuiAddress,
+	totalAmount uint64,
+	withdrawalAmount uint64,
+	coinType move_types.TypeTag,
+) error {
+	if withdrawalAmount != totalAmount {
+		return fmt.Errorf(
+			"address-balance-only gasless transfer requires withdrawalAmount (%d) == totalAmount (%d)",
+			withdrawalAmount,
+			totalAmount,
+		)
+	}
+	balance := p.redeemFunds("balance", withdrawalAmount, coinType)
+	_, err := p.BalanceSendFunds(balance, recipient, coinType)
+	return err
+}
+
+// gaslessTransferFromCoins consolidates the supplied coins (plus any redeemed shortfall)
+// into one coin, splits out totalAmount for the recipient, and returns the remainder (which
+// may be zero) to the sender — all via coin::send_funds, so no coin object survives.
+func (p *ProgrammableTransactionBuilder) gaslessTransferFromCoins(
+	sender SuiAddress,
+	recipient SuiAddress,
+	coins []*ObjectRef,
+	totalAmount uint64,
+	withdrawalAmount uint64,
+	coinType move_types.TypeTag,
+) error {
+	base, err := p.mergeGaslessCoins(coins, withdrawalAmount, coinType)
+	if err != nil {
 		return err
 	}
+	recipientCoin, err := p.splitCoinAmount(base, totalAmount)
+	if err != nil {
+		return err
+	}
+	if _, err := p.CoinSendFunds(recipientCoin, recipient, coinType); err != nil {
+		return err
+	}
+	_, err = p.CoinSendFunds(base, sender, coinType)
+	return err
+}
 
-	// Coins supplied: gather them (plus any redeemed shortfall), merge when there's more than
-	// one source, then split out the amount.
+// mergeGaslessCoins references every coin object and redeems any shortfall as a Coin<T>,
+// returning a single "base" coin holding their combined value (it emits a MergeCoins only
+// when there is more than one source).
+func (p *ProgrammableTransactionBuilder) mergeGaslessCoins(
+	coins []*ObjectRef,
+	withdrawalAmount uint64,
+	coinType move_types.TypeTag,
+) (Argument, error) {
 	coinArgs := make([]Argument, 0, len(coins)+1)
 	for _, c := range coins {
 		coinArg, err := p.Obj(ObjectArg{ImmOrOwnedObject: c})
 		if err != nil {
-			return err
+			return Argument{}, err
 		}
 		coinArgs = append(coinArgs, coinArg)
 	}
@@ -140,29 +183,28 @@ func (p *ProgrammableTransactionBuilder) GaslessTransfer(
 			},
 		)
 	}
+	return base, nil
+}
 
-	amtArg, err := p.Pure(totalAmount)
+// splitCoinAmount splits amount off source, returning the new coin holding exactly amount;
+// the remainder stays in source.
+func (p *ProgrammableTransactionBuilder) splitCoinAmount(
+	source Argument,
+	amount uint64,
+) (Argument, error) {
+	amtArg, err := p.Pure(amount)
 	if err != nil {
-		return err
+		return Argument{}, err
 	}
 	splitResult := p.Command(
 		Command{
-			SplitCoins: &SplitCoinsCommand{Argument: base, Arguments: []Argument{amtArg}},
+			SplitCoins: &SplitCoinsCommand{Argument: source, Arguments: []Argument{amtArg}},
 		},
 	)
 	if splitResult.Result == nil {
-		return errors.New("self.command should always give a Argument::Result")
+		return Argument{}, errors.New("self.command should always give a Argument::Result")
 	}
-	splitCoin := Argument{
+	return Argument{
 		NestedResult: &NestedResultArgument{Result1: *splitResult.Result, Result2: 0},
-	}
-
-	if _, err := p.CoinSendFunds(splitCoin, recipient, coinType); err != nil {
-		return err
-	}
-	// Return the remainder (may be zero) to the sender's balance so no coin survives.
-	if _, err := p.CoinSendFunds(base, sender, coinType); err != nil {
-		return err
-	}
-	return nil
+	}, nil
 }
