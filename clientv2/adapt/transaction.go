@@ -17,10 +17,13 @@ import (
 // always fetched since JSON-RPC always returns them. ShowObjectChanges has no
 // gRPC equivalent (object changes require indexing data beyond effects) and is
 // ignored; the created/mutated/deleted breakdown is available via ShowEffects.
+// ShowInput and ShowRawInput both need the BCS TransactionData plus the user
+// signatures: the parsed transaction surfaces them as txSignatures and the raw
+// SenderSignedData envelope embeds them.
 func ResponseReadMaskPaths(options types.SuiTransactionBlockResponseOptions) []string {
 	paths := []string{"digest", "checkpoint", "timestamp"}
-	if options.ShowInput {
-		paths = append(paths, "transaction.bcs")
+	if options.ShowInput || options.ShowRawInput {
+		paths = append(paths, "transaction.bcs", "signatures")
 	}
 	if options.ShowEffects {
 		paths = append(paths, "effects")
@@ -47,15 +50,30 @@ func PrefixPaths(prefix string, paths []string) []string {
 // Response converts an ExecutedTransaction into the JSON-RPC
 // sui_getTransactionBlock response shape. Fields absent from the proto (not
 // covered by the request's read mask) stay unset, mirroring how JSON-RPC omits
-// fields not requested via options. The parsed Transaction field is not
-// reconstructed; ShowInput surfaces the raw BCS TransactionData instead.
-func Response(tx *pb.ExecutedTransaction) *types.SuiTransactionBlockResponse {
+// fields not requested via options. Like JSON-RPC, ShowRawInput yields the BCS
+// SenderSignedData bytes (synthesized from the transaction and its signatures)
+// and ShowInput the parsed transaction; a transaction that cannot be decoded
+// (e.g. a system transaction kind newer than the SDK's BCS types) reports the
+// problem via the response's Errors field instead of failing the call.
+func Response(tx *pb.ExecutedTransaction, options types.SuiTransactionBlockResponseOptions) *types.SuiTransactionBlockResponse {
 	if tx == nil {
 		return nil
 	}
 	response := &types.SuiTransactionBlockResponse{
-		Digest:         parseDigest(tx.GetDigest()),
-		RawTransaction: tx.GetTransaction().GetBcs().GetValue(),
+		Digest: parseDigest(tx.GetDigest()),
+	}
+	if txData := tx.GetTransaction().GetBcs().GetValue(); len(txData) > 0 {
+		if options.ShowRawInput {
+			response.RawTransaction = RawSenderSignedData(txData, tx.GetSignatures())
+		}
+		if options.ShowInput {
+			block, err := TransactionBlock(txData, tx.GetSignatures())
+			if err != nil {
+				response.Errors = append(response.Errors, err.Error())
+			} else {
+				response.Transaction = block
+			}
+		}
 	}
 	if effects := Effects(tx.GetEffects()); effects != nil {
 		response.Effects = &lib.TagJson[types.SuiTransactionBlockEffects]{Data: *effects}

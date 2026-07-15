@@ -21,12 +21,11 @@
 // Documented, tolerated backend gaps (asserted as such, not as equality):
 //   - Balance.CoinObjectCount / LockedBalance: no gRPC source, zero on v2.
 //   - Coin.LockedUntilEpoch: no gRPC source, nil on v2.
-//   - ShowObjectChanges / parsed Transaction / DryRun .Input: not populated
-//     by the v2 backend.
-//   - RawTransaction: v1 returns BCS SenderSignedData and only honors the
-//     wire-level showRawInput flag (which types.SuiTransactionBlockResponseOptions
-//     does not expose), v2 returns bare BCS TransactionData; the test asserts
-//     the byte-level containment relation between the two.
+//   - ShowObjectChanges / DryRun .Input: not populated by the v2 backend.
+//   - Parsed Transaction pure inputs: v2 only resolves pure input value types
+//     from built-in command usage, not Move call signatures, so input/command
+//     rendering is not compared field-for-field; the fields consumers rely on
+//     (sender, gasData, txSignatures, raw bytes) are compared exactly.
 //   - Checkpoint.ValidatorSignature: certificate aggregation differs between
 //     nodes, compared for presence only.
 //   - GetCoins on SIP-58 accounts: v1 lists the accumulator-derived Coin
@@ -51,7 +50,6 @@ import (
 	"github.com/fardream/go-bcs/bcs"
 	"github.com/stretchr/testify/require"
 
-	"github.com/utila-io/go-sui-sdk/client"
 	"github.com/utila-io/go-sui-sdk/lib"
 	"github.com/utila-io/go-sui-sdk/sui_types"
 	"github.com/utila-io/go-sui-sdk/types"
@@ -451,9 +449,9 @@ func TestParityGetCheckpointTransactions(t *testing.T) {
 
 // MARK - Transactions
 
-// fullOptions asks for everything both backends can serve. ShowInput is
-// exercised separately in TestParityRawTransaction because the two backends
-// disagree on what it returns (see the file header).
+// fullOptions asks for everything both backends can serve. ShowInput and
+// ShowRawInput are exercised separately in TestParityRawTransaction, which
+// pins down the raw-byte and parsed-transaction parity.
 var fullOptions = types.SuiTransactionBlockResponseOptions{
 	ShowEffects:        true,
 	ShowEvents:         true,
@@ -470,40 +468,45 @@ func TestParityGetTransactionBlock(t *testing.T) {
 	require.NotEmpty(t, fromV1.BalanceChanges, "fixture transaction should have balance changes")
 }
 
-// TestParityRawTransaction pins down the documented RawTransaction gap: the
-// v2 backend surfaces bare BCS TransactionData under ShowInput, while v1 only
-// returns raw bytes for the wire-level showRawInput flag (not exposed by
-// types.SuiTransactionBlockResponseOptions) and wraps them in SenderSignedData:
-// vector length 1 + 3-byte intent, then TransactionData, then the signatures.
+// TestParityRawTransaction covers ShowRawInput and ShowInput: both backends
+// must return the identical BCS SenderSignedData bytes under ShowRawInput,
+// and the parsed transaction fields consumers rely on (sender, gasData,
+// txSignatures) must match exactly under ShowInput. PTB input/command
+// rendering is only compared structurally: v2 cannot resolve pure input value
+// types that JSON-RPC derives from on-chain Move signatures (see file header).
 func TestParityRawTransaction(t *testing.T) {
 	env, ctx := parity(t), liveCtx(t)
 
-	inputOptions := types.SuiTransactionBlockResponseOptions{ShowInput: true}
-	fromV2, err := env.v2.GetTransactionBlock(ctx, env.txDigest, inputOptions)
-	require.NoError(t, err)
-	require.NotEmpty(t, fromV2.RawTransaction, "v2 ShowInput should populate RawTransaction")
-
-	// v1 via the facade: ShowInput yields the parsed transaction, no raw bytes.
+	inputOptions := types.SuiTransactionBlockResponseOptions{ShowInput: true, ShowRawInput: true}
 	fromV1, err := env.v1.GetTransactionBlock(ctx, env.txDigest, inputOptions)
 	require.NoError(t, err)
-	require.Empty(t, fromV1.RawTransaction, "documented gap: v1 ShowInput has no raw bytes")
+	fromV2, err := env.v2.GetTransactionBlock(ctx, env.txDigest, inputOptions)
+	require.NoError(t, err)
+
+	// ShowRawInput: identical BCS SenderSignedData on both backends.
+	require.NotEmpty(t, fromV1.RawTransaction, "v1 ShowRawInput should populate RawTransaction")
+	require.Equal(t, fromV1.RawTransaction, fromV2.RawTransaction,
+		"raw SenderSignedData bytes should be identical across backends")
+
+	// ShowInput: parsed transaction parity on the fields consumers read.
 	require.NotNil(t, fromV1.Transaction, "v1 ShowInput returns the parsed transaction")
+	require.NotNil(t, fromV2.Transaction, "v2 ShowInput returns the parsed transaction (errors: %v)", fromV2.Errors)
+	wantData, gotData := fromV1.Transaction.Data.Data.V1, fromV2.Transaction.Data.Data.V1
+	require.NotNil(t, wantData)
+	require.NotNil(t, gotData)
+	require.Equal(t, wantData.Sender.String(), gotData.Sender.String(), "sender")
+	require.Equal(t, wantData.GasData.Owner, gotData.GasData.Owner, "gasData.owner")
+	require.Equal(t, wantData.GasData.Price.Uint64(), gotData.GasData.Price.Uint64(), "gasData.price")
+	require.Equal(t, wantData.GasData.Budget.Uint64(), gotData.GasData.Budget.Uint64(), "gasData.budget")
+	require.Equal(t, wantData.GasData.Payment, gotData.GasData.Payment, "gasData.payment")
+	require.Equal(t, fromV1.Transaction.TxSignatures, fromV2.Transaction.TxSignatures, "txSignatures")
 
-	// v1 with the raw wire flag, to compare actual bytes.
-	rawClient, err := client.Dial(env.jsonrpcEndpoint)
-	require.NoError(t, err)
-	var rawResp types.SuiTransactionBlockResponse
-	err = rawClient.CallContext(ctx, &rawResp, client.SuiMethod("getTransactionBlock"),
-		env.txDigest, map[string]bool{"showRawInput": true})
-	require.NoError(t, err)
-	require.NotEmpty(t, rawResp.RawTransaction)
-
-	// SenderSignedData framing around the same TransactionData bytes.
-	v1Raw, v2Raw := rawResp.RawTransaction, fromV2.RawTransaction
-	require.GreaterOrEqual(t, len(v1Raw), 4+len(v2Raw))
-	require.Equal(t, []byte{1, 0, 0, 0}, v1Raw[:4], "SenderSignedData vec length + intent prefix")
-	require.Equal(t, v2Raw, v1Raw[4:4+len(v2Raw)],
-		"v2 RawTransaction should be the TransactionData embedded in v1's SenderSignedData")
+	// Kind parity: same variant with the same PTB input/command counts.
+	wantPTB, gotPTB := wantData.Transaction.Data.ProgrammableTransaction, gotData.Transaction.Data.ProgrammableTransaction
+	require.NotNil(t, wantPTB, "fixture transaction should be a ProgrammableTransaction")
+	require.NotNil(t, gotPTB)
+	require.Len(t, gotPTB.Inputs, len(wantPTB.Inputs), "PTB input count")
+	require.Len(t, gotPTB.Commands, len(wantPTB.Commands), "PTB command count")
 }
 
 func TestParityMultiGetTransactionBlocks(t *testing.T) {

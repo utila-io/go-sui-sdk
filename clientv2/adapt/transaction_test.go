@@ -118,7 +118,7 @@ func TestResponse(t *testing.T) {
 	fxDigestStr, _ := testDigest(0x73)
 
 	t.Run("minimal", func(t *testing.T) {
-		got := Response(&pb.ExecutedTransaction{Digest: proto.String(txDigestStr)})
+		got := Response(&pb.ExecutedTransaction{Digest: proto.String(txDigestStr)}, types.SuiTransactionBlockResponseOptions{})
 		require.Equal(t, txDigest, got.Digest)
 		require.Nil(t, got.Effects)
 		require.Nil(t, got.Events)
@@ -126,28 +126,62 @@ func TestResponse(t *testing.T) {
 		require.Nil(t, got.TimestampMs)
 		require.Nil(t, got.Checkpoint)
 		require.Empty(t, got.RawTransaction)
+		require.Nil(t, got.Transaction)
 	})
 
 	t.Run("full", func(t *testing.T) {
+		txData := testTransactionDataBytes(t)
+		signature := &pb.UserSignature{Bcs: &pb.Bcs{Value: []byte{0x0a, 0x0b, 0x0c}}}
 		got := Response(&pb.ExecutedTransaction{
 			Digest: proto.String(txDigestStr),
 			Transaction: &pb.Transaction{
-				Bcs: &pb.Bcs{Value: []byte{0x01, 0x02}},
+				Bcs: &pb.Bcs{Value: txData},
 			},
+			Signatures: []*pb.UserSignature{signature},
 			Effects: &pb.TransactionEffects{
 				Status:            &pb.ExecutionStatus{Success: proto.Bool(true)},
 				TransactionDigest: proto.String(fxDigestStr),
 			},
 			Checkpoint: proto.Uint64(555),
 			Timestamp:  timestamppb.New(time.UnixMilli(1700000000456)),
-		})
+		}, types.SuiTransactionBlockResponseOptions{ShowInput: true, ShowRawInput: true})
 		require.Equal(t, txDigest, got.Digest)
-		require.Equal(t, []byte{0x01, 0x02}, got.RawTransaction)
+		require.Equal(t, RawSenderSignedData(txData, []*pb.UserSignature{signature}), got.RawTransaction)
+		require.NotNil(t, got.Transaction)
+		require.Empty(t, got.Errors)
 		require.NotNil(t, got.Effects)
 		require.Equal(t, types.ExecutionStatusSuccess, got.Effects.Data.V1.Status.Status)
 		require.NotNil(t, got.Checkpoint)
 		require.EqualValues(t, 555, got.Checkpoint.Uint64())
 		require.NotNil(t, got.TimestampMs)
 		require.EqualValues(t, 1700000000456, got.TimestampMs.Uint64())
+	})
+
+	t.Run("input options off leave transaction fields unset", func(t *testing.T) {
+		got := Response(&pb.ExecutedTransaction{
+			Digest:      proto.String(txDigestStr),
+			Transaction: &pb.Transaction{Bcs: &pb.Bcs{Value: testTransactionDataBytes(t)}},
+		}, types.SuiTransactionBlockResponseOptions{ShowEffects: true})
+		require.Nil(t, got.RawTransaction)
+		require.Nil(t, got.Transaction)
+	})
+
+	t.Run("show raw input only", func(t *testing.T) {
+		txData := testTransactionDataBytes(t)
+		got := Response(&pb.ExecutedTransaction{
+			Digest:      proto.String(txDigestStr),
+			Transaction: &pb.Transaction{Bcs: &pb.Bcs{Value: txData}},
+		}, types.SuiTransactionBlockResponseOptions{ShowRawInput: true})
+		require.Equal(t, RawSenderSignedData(txData, nil), got.RawTransaction)
+		require.Nil(t, got.Transaction)
+	})
+
+	t.Run("undecodable transaction reports an error instead of failing", func(t *testing.T) {
+		got := Response(&pb.ExecutedTransaction{
+			Digest:      proto.String(txDigestStr),
+			Transaction: &pb.Transaction{Bcs: &pb.Bcs{Value: []byte{0xff, 0xff}}},
+		}, types.SuiTransactionBlockResponseOptions{ShowInput: true})
+		require.Nil(t, got.Transaction)
+		require.NotEmpty(t, got.Errors)
 	})
 }

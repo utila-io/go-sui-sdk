@@ -18,6 +18,15 @@ import (
 // ExecuteTransaction, whose mask is ExecutedTransaction-relative).
 const simulateReadMaskPrefix = "transaction."
 
+// simulateOptions is what simulate fetches for every simulation: effects,
+// events and balance changes (transaction input is what the caller supplied,
+// so there is nothing to echo back).
+var simulateOptions = types.SuiTransactionBlockResponseOptions{
+	ShowEffects:        true,
+	ShowEvents:         true,
+	ShowBalanceChanges: true,
+}
+
 // ExecuteTransactionBlock submits a signed transaction. txBytes is the BCS
 // serialization of TransactionData; signatures are sui_types.Signature values
 // (or base64 strings of serialized signatures). requestType is ignored: gRPC
@@ -50,7 +59,7 @@ func (c *Client) ExecuteTransactionBlock(
 	if err != nil {
 		return nil, fmt.Errorf("ExecuteTransactionBlock: %w", err)
 	}
-	return adapt.Response(resp.GetTransaction()), nil
+	return adapt.Response(resp.GetTransaction(), opts), nil
 }
 
 // DryRunTransaction simulates a full BCS TransactionData with checks enabled.
@@ -61,7 +70,7 @@ func (c *Client) DryRunTransaction(ctx context.Context, txBytes lib.Base64Data) 
 	if err != nil {
 		return nil, fmt.Errorf("DryRunTransaction: %w", err)
 	}
-	response := adapt.Response(tx)
+	response := adapt.Response(tx, simulateOptions)
 	out := &types.DryRunTransactionBlockResponse{
 		Events:         response.Events,
 		BalanceChanges: response.BalanceChanges,
@@ -100,7 +109,7 @@ func (c *Client) DevInspectTransactionBlock(
 	if err != nil {
 		return nil, fmt.Errorf("DevInspectTransactionBlock: %w", err)
 	}
-	response := adapt.Response(tx)
+	response := adapt.Response(tx, simulateOptions)
 	out := &types.DevInspectResults{Events: response.Events}
 	if response.Effects != nil {
 		out.Effects = *response.Effects
@@ -120,11 +129,7 @@ func (c *Client) simulate(
 	txData []byte,
 	checks pb.SimulateTransactionRequest_TransactionChecks,
 ) (*pb.ExecutedTransaction, error) {
-	paths := adapt.ResponseReadMaskPaths(types.SuiTransactionBlockResponseOptions{
-		ShowEffects:        true,
-		ShowEvents:         true,
-		ShowBalanceChanges: true,
-	})
+	paths := adapt.ResponseReadMaskPaths(simulateOptions)
 	resp, err := c.exec.SimulateTransaction(ctx, &pb.SimulateTransactionRequest{
 		Transaction: &pb.Transaction{Bcs: &pb.Bcs{Value: txData}},
 		ReadMask:    &fieldmaskpb.FieldMask{Paths: adapt.PrefixPaths(simulateReadMaskPrefix, paths)},

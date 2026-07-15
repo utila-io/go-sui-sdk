@@ -91,7 +91,20 @@ func TestResponseReadMaskPaths(t *testing.T) {
 		{
 			name:    "show input",
 			options: types.SuiTransactionBlockResponseOptions{ShowInput: true},
-			want:    append(append([]string{}, always...), "transaction.bcs"),
+			want:    append(append([]string{}, always...), "transaction.bcs", "signatures"),
+		},
+		{
+			name:    "show raw input",
+			options: types.SuiTransactionBlockResponseOptions{ShowRawInput: true},
+			want:    append(append([]string{}, always...), "transaction.bcs", "signatures"),
+		},
+		{
+			name: "show input and raw input request the transaction once",
+			options: types.SuiTransactionBlockResponseOptions{
+				ShowInput:    true,
+				ShowRawInput: true,
+			},
+			want: append(append([]string{}, always...), "transaction.bcs", "signatures"),
 		},
 		{
 			name:    "show effects",
@@ -121,8 +134,10 @@ func TestResponseReadMaskPaths(t *testing.T) {
 				ShowEvents:         true,
 				ShowObjectChanges:  true,
 				ShowBalanceChanges: true,
+				ShowRawInput:       true,
 			},
-			want: append(append([]string{}, always...), "transaction.bcs", "effects", "events", "balance_changes"),
+			want: append(append([]string{}, always...),
+				"transaction.bcs", "signatures", "effects", "events", "balance_changes"),
 		},
 	}
 	for _, tt := range tests {
