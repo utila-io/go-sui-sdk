@@ -340,6 +340,8 @@ type SuiTransactionBlockResponseOptions struct {
 	ShowObjectChanges bool `json:"showObjectChanges,omitempty"`
 	/* Whether to show coin balance changes. Default to be false. */
 	ShowBalanceChanges bool `json:"showBalanceChanges,omitempty"`
+	/* Whether to show raw transaction input data (BCS SenderSignedData). Default to be false. */
+	ShowRawInput bool `json:"showRawInput,omitempty"`
 }
 
 type SuiTransactionBlockResponseQuery struct {

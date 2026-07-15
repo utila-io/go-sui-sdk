@@ -35,6 +35,12 @@ type SuiClient interface {
 	// GetCoins returns a page of coin objects owned by owner. A nil coinType
 	// defaults to 0x2::sui::SUI. The cursor is an opaque string from a
 	// previous page's NextCursor.
+	//
+	// Backend divergence: JSON-RPC additionally synthesizes a pseudo-coin
+	// representing the owner's SIP-58 address balance (it has no on-chain
+	// object and cannot be fetched or used as an object ref); the gRPC
+	// backend returns real coin objects only. Use GetBalance's
+	// FundsInAddressBalance for the address-balance portion.
 	GetCoins(ctx context.Context, owner sui_types.SuiAddress, coinType *string, cursor *string, limit uint) (*CoinPage, error)
 	GetCoinMetadata(ctx context.Context, coinType string) (*types.SuiCoinMetadata, error)
 	GetReferenceGasPrice(ctx context.Context) (*types.SafeSuiBigInt[uint64], error)

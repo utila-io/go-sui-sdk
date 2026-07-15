@@ -24,10 +24,10 @@ func Checkpoint(checkpoint *pb.Checkpoint) *types.Checkpoint {
 		NetworkTotalTransactions:   types.NewSafeSuiBigInt(summary.GetTotalNetworkTransactions()),
 		EpochRollingGasCostSummary: gasCostSummary(summary.GetEpochRollingGasCostSummary()),
 	}
-	if summary.Timestamp != nil {
+	if summary.GetTimestamp() != nil {
 		out.TimestampMs = types.NewSafeSuiBigInt(uint64(summary.GetTimestamp().AsTime().UnixMilli()))
 	}
-	if summary.PreviousDigest != nil {
+	if summary.GetPreviousDigest() != "" {
 		previousDigest := parseDigest(summary.GetPreviousDigest())
 		out.PreviousDigest = &previousDigest
 	}

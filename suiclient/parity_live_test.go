@@ -1,0 +1,811 @@
+//go:build live
+
+// Parity tests: run every SuiClient method against the JSON-RPC (v1) and gRPC
+// (v2) backends on Sui testnet and diff the results.
+//
+// Run with:
+//
+//	go test -tags live ./suiclient/ -run TestParity -v
+//
+// Endpoints (overridable via env):
+//   - SUI_PARITY_GRPC_ENDPOINT    (default https://fullnode.testnet.sui.io:443)
+//   - SUI_PARITY_JSONRPC_ENDPOINT (default: fullnode.testnet.sui.io, falling
+//     back to public testnet JSON-RPC nodes — Mysten's fullnode has retired its
+//     JSON-RPC route and answers 404 there as of mid-2026)
+//
+// Fixtures (a recent checkpoint, a transaction with balance changes, an
+// address owning SUI coins and, when found, an address with SIP-58
+// accumulator activity) are discovered at run time from the chain tip, since
+// testnet fullnodes prune history and hard-coded fixtures would rot.
+//
+// Documented, tolerated backend gaps (asserted as such, not as equality):
+//   - Balance.CoinObjectCount / LockedBalance: no gRPC source, zero on v2.
+//   - Coin.LockedUntilEpoch: no gRPC source, nil on v2.
+//   - ShowObjectChanges / parsed Transaction / DryRun .Input: not populated
+//     by the v2 backend.
+//   - RawTransaction: v1 returns BCS SenderSignedData and only honors the
+//     wire-level showRawInput flag (which types.SuiTransactionBlockResponseOptions
+//     does not expose), v2 returns bare BCS TransactionData; the test asserts
+//     the byte-level containment relation between the two.
+//   - Checkpoint.ValidatorSignature: certificate aggregation differs between
+//     nodes, compared for presence only.
+//   - GetCoins on SIP-58 accounts: v1 lists the accumulator-derived Coin
+//     object, v2's ListOwnedObjects object-type filter does not return it, so
+//     the coin fixture is restricted to accounts without address balances.
+//   - Volatile values (live balances, coin lists, gas price at epoch
+//     boundaries) are fetched back-to-back and the pair is retried on
+//     mismatch.
+package suiclient
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"sort"
+	"strconv"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/fardream/go-bcs/bcs"
+	"github.com/stretchr/testify/require"
+
+	"github.com/utila-io/go-sui-sdk/client"
+	"github.com/utila-io/go-sui-sdk/lib"
+	"github.com/utila-io/go-sui-sdk/sui_types"
+	"github.com/utila-io/go-sui-sdk/types"
+)
+
+const (
+	defaultGRPCEndpoint = "https://fullnode.testnet.sui.io:443"
+	// volatileRetries is how many times a pair of volatile reads is retried
+	// before the mismatch is reported as a failure.
+	volatileRetries = 3
+)
+
+// jsonrpcEndpointCandidates is tried in order when SUI_PARITY_JSONRPC_ENDPOINT
+// is unset. All serve the same testnet chain as the gRPC endpoint.
+var jsonrpcEndpointCandidates = []string{
+	"https://fullnode.testnet.sui.io:443",
+	"https://rpc-testnet.suiscan.xyz",
+	"https://sui-testnet-rpc.publicnode.com",
+}
+
+// parityEnv holds the two backends plus fixtures discovered from the chain.
+type parityEnv struct {
+	v1 SuiClient // JSON-RPC backend
+	v2 SuiClient // gRPC backend
+
+	jsonrpcEndpoint string
+
+	seq       uint64                        // fixture checkpoint sequence number
+	txDigests []sui_types.TransactionDigest // transactions of the fixture checkpoint
+	txDigest  sui_types.TransactionDigest   // fixture transaction with balance changes
+	coinAddr  sui_types.SuiAddress          // address owning a small number of SUI coins
+	accumAddr *sui_types.SuiAddress         // address with SIP-58 address-balance activity, if found
+}
+
+var (
+	envOnce sync.Once
+	envVal  *parityEnv
+	envErr  error
+)
+
+func parity(t *testing.T) *parityEnv {
+	t.Helper()
+	envOnce.Do(func() { envVal, envErr = setupParity() })
+	require.NoError(t, envErr, "parity fixture setup failed")
+	return envVal
+}
+
+func liveCtx(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	t.Cleanup(cancel)
+	return ctx
+}
+
+func setupParity() (*parityEnv, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+
+	grpcEndpoint := os.Getenv("SUI_PARITY_GRPC_ENDPOINT")
+	if grpcEndpoint == "" {
+		grpcEndpoint = defaultGRPCEndpoint
+	}
+	v2, err := New(grpcEndpoint, WithBackend(BackendGRPC))
+	if err != nil {
+		return nil, fmt.Errorf("dial gRPC backend %s: %w", grpcEndpoint, err)
+	}
+	if _, err := v2.GetLatestCheckpointSequenceNumber(ctx); err != nil {
+		return nil, fmt.Errorf("gRPC endpoint %s unusable: %w", grpcEndpoint, err)
+	}
+
+	env := &parityEnv{v2: v2}
+	candidates := jsonrpcEndpointCandidates
+	if fromEnv := os.Getenv("SUI_PARITY_JSONRPC_ENDPOINT"); fromEnv != "" {
+		candidates = []string{fromEnv}
+	}
+	var probeErrs []error
+	for _, endpoint := range candidates {
+		v1, err := New(endpoint, WithBackend(BackendJSONRPC))
+		if err != nil {
+			probeErrs = append(probeErrs, fmt.Errorf("%s: %w", endpoint, err))
+			continue
+		}
+		probeCtx, probeCancel := context.WithTimeout(ctx, 15*time.Second)
+		_, err = v1.GetLatestCheckpointSequenceNumber(probeCtx)
+		probeCancel()
+		if err != nil {
+			probeErrs = append(probeErrs, fmt.Errorf("%s: %w", endpoint, err))
+			continue
+		}
+		env.v1 = v1
+		env.jsonrpcEndpoint = endpoint
+		break
+	}
+	if env.v1 == nil {
+		return nil, fmt.Errorf("no usable JSON-RPC testnet endpoint: %v", probeErrs)
+	}
+
+	if err := env.discoverFixtures(ctx); err != nil {
+		return nil, err
+	}
+	return env, nil
+}
+
+// discoverFixtures walks recent checkpoints (via the v1 backend) looking for a
+// checkpoint containing a transaction with balance changes, a SUI-holding
+// address with a modest coin count, and SIP-58 accumulator activity.
+func (env *parityEnv) discoverFixtures(ctx context.Context) error {
+	latestStr, err := env.v1.GetLatestCheckpointSequenceNumber(ctx)
+	if err != nil {
+		return fmt.Errorf("discover: latest checkpoint: %w", err)
+	}
+	latest, err := strconv.ParseUint(latestStr, 10, 64)
+	if err != nil {
+		return fmt.Errorf("discover: latest checkpoint %q: %w", latestStr, err)
+	}
+
+	options := types.SuiTransactionBlockResponseOptions{ShowEffects: true, ShowBalanceChanges: true}
+	const scanWindow = 60
+	// Start a little behind the tip so both nodes are guaranteed to have the
+	// fixture checkpoint.
+	for seq := latest - 5; seq > latest-5-scanWindow; seq-- {
+		txs, err := env.v1.GetCheckpointTransactions(ctx, seq, options)
+		if err != nil {
+			return fmt.Errorf("discover: checkpoint %d transactions: %w", seq, err)
+		}
+		for _, tx := range txs {
+			if env.accumAddr == nil && tx.Effects != nil && tx.Effects.Data.V1 != nil {
+				for _, event := range tx.Effects.Data.V1.AccumulatorEvents {
+					if addr, err := sui_types.NewAddressFromHex(event.Address); err == nil {
+						env.accumAddr = addr
+						break
+					}
+				}
+			}
+			if env.seq != 0 || len(tx.BalanceChanges) == 0 {
+				continue
+			}
+			coinAddr, ok := env.pickCoinAddress(ctx, tx.BalanceChanges)
+			if !ok {
+				continue
+			}
+			env.seq = seq
+			env.txDigest = tx.Digest
+			env.coinAddr = coinAddr
+			for _, checkpointTx := range txs {
+				env.txDigests = append(env.txDigests, checkpointTx.Digest)
+			}
+		}
+		if env.seq != 0 && env.accumAddr != nil {
+			break
+		}
+	}
+	if env.seq == 0 {
+		return fmt.Errorf("discover: no checkpoint with balance changes in [%d, %d]", latest-5-scanWindow, latest-5)
+	}
+	return nil
+}
+
+// pickCoinAddress returns an AddressOwner from the balance changes that holds
+// SUI coin objects in a count small enough to enumerate exhaustively (needed
+// for order-insensitive GetCoins parity).
+func (env *parityEnv) pickCoinAddress(ctx context.Context, changes []types.BalanceChange) (sui_types.SuiAddress, bool) {
+	var singleCoinFallback *sui_types.SuiAddress
+	for _, change := range changes {
+		if change.CoinType != types.SUI_COIN_TYPE {
+			continue
+		}
+		if change.Owner.ObjectOwnerInternal == nil || change.Owner.AddressOwner == nil {
+			continue
+		}
+		addr := *change.Owner.AddressOwner
+		balance, err := env.v1.GetBalance(ctx, addr, types.SUI_COIN_TYPE)
+		if err != nil {
+			continue
+		}
+		// Skip SIP-58 accounts: their funds live in an accumulator, exposed by
+		// v1 getCoins as a derived Coin object that the gRPC backend's
+		// ListOwnedObjects filter does not return (documented gap), and whose
+		// balance moves too fast to compare.
+		if !balance.FundsInAddressBalance.IsZero() {
+			continue
+		}
+		// Prefer addresses with multiple coins so the pagination walk in
+		// TestParityGetCoins crosses page boundaries.
+		if balance.CoinObjectCount >= 2 && balance.CoinObjectCount <= 25 {
+			return addr, true
+		}
+		if balance.CoinObjectCount == 1 && singleCoinFallback == nil {
+			singleCoinFallback = &addr
+		}
+	}
+	if singleCoinFallback != nil {
+		return *singleCoinFallback, true
+	}
+	return sui_types.SuiAddress{}, false
+}
+
+// retryVolatile runs compare up to volatileRetries times, tolerating
+// transient mismatches from live chain state moving between the paired reads.
+func retryVolatile(t *testing.T, compare func() error) {
+	t.Helper()
+	var err error
+	for attempt := 0; attempt < volatileRetries; attempt++ {
+		if err = compare(); err == nil {
+			return
+		}
+		t.Logf("volatile mismatch (attempt %d/%d): %v", attempt+1, volatileRetries, err)
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatalf("still mismatched after %d attempts: %v", volatileRetries, err)
+}
+
+// MARK - Comparators
+
+func requireSameCheckpoint(t *testing.T, want, got *types.Checkpoint) {
+	t.Helper()
+	require.Equal(t, want.SequenceNumber, got.SequenceNumber)
+	require.Equal(t, want.Epoch, got.Epoch)
+	require.Equal(t, want.Digest.String(), got.Digest.String())
+	require.Equal(t, want.NetworkTotalTransactions, got.NetworkTotalTransactions)
+	require.Equal(t, want.TimestampMs, got.TimestampMs)
+	require.Equal(t, want.EpochRollingGasCostSummary, got.EpochRollingGasCostSummary)
+	if want.PreviousDigest != nil || got.PreviousDigest != nil {
+		require.NotNil(t, want.PreviousDigest)
+		require.NotNil(t, got.PreviousDigest)
+		require.Equal(t, want.PreviousDigest.String(), got.PreviousDigest.String())
+	}
+	require.Equal(t, digestStrings(want.Transactions), digestStrings(got.Transactions))
+	// The aggregate certificate can be a different (equally valid) validator
+	// subset on different nodes, so only its presence is comparable.
+	require.NotEmpty(t, want.ValidatorSignature)
+	require.NotEmpty(t, got.ValidatorSignature)
+}
+
+func digestStrings(digests []*sui_types.TransactionDigest) []string {
+	out := make([]string, len(digests))
+	for i, digest := range digests {
+		out[i] = digest.String()
+	}
+	return out
+}
+
+// balanceChangeKeys renders balance changes into canonical sorted strings so
+// the two backends can be compared order-insensitively.
+func balanceChangeKeys(changes []types.BalanceChange) []string {
+	keys := make([]string, 0, len(changes))
+	for _, change := range changes {
+		owner := "<none>"
+		if change.Owner.ObjectOwnerInternal != nil && change.Owner.AddressOwner != nil {
+			owner = change.Owner.AddressOwner.String()
+		} else if change.Owner.ObjectOwnerInternal != nil && change.Owner.ObjectOwner != nil {
+			owner = "obj:" + change.Owner.ObjectOwner.String()
+		}
+		keys = append(keys, owner+"|"+change.CoinType+"|"+change.Amount)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func eventTypes(events []types.SuiEvent) []string {
+	out := make([]string, len(events))
+	for i, event := range events {
+		out[i] = event.Type
+	}
+	return out
+}
+
+func compareTxResponse(want, got *types.SuiTransactionBlockResponse, options types.SuiTransactionBlockResponseOptions) error {
+	if want.Digest.String() != got.Digest.String() {
+		return fmt.Errorf("digest: v1 %s, v2 %s", want.Digest, got.Digest)
+	}
+	if (want.TimestampMs == nil) != (got.TimestampMs == nil) {
+		return fmt.Errorf("%s: timestampMs presence: v1 %v, v2 %v", want.Digest, want.TimestampMs, got.TimestampMs)
+	}
+	if want.TimestampMs != nil && want.TimestampMs.Uint64() != got.TimestampMs.Uint64() {
+		return fmt.Errorf("%s: timestampMs: v1 %d, v2 %d", want.Digest, want.TimestampMs.Uint64(), got.TimestampMs.Uint64())
+	}
+	if want.Checkpoint != nil && got.Checkpoint != nil && want.Checkpoint.Uint64() != got.Checkpoint.Uint64() {
+		return fmt.Errorf("%s: checkpoint: v1 %d, v2 %d", want.Digest, want.Checkpoint.Uint64(), got.Checkpoint.Uint64())
+	}
+	if options.ShowEffects {
+		if err := compareEffects(want.Effects, got.Effects); err != nil {
+			return fmt.Errorf("%s: %w", want.Digest, err)
+		}
+	}
+	if options.ShowBalanceChanges {
+		wantKeys, gotKeys := balanceChangeKeys(want.BalanceChanges), balanceChangeKeys(got.BalanceChanges)
+		if fmt.Sprint(wantKeys) != fmt.Sprint(gotKeys) {
+			return fmt.Errorf("%s: balanceChanges: v1 %v, v2 %v", want.Digest, wantKeys, gotKeys)
+		}
+	}
+	if options.ShowEvents {
+		if len(want.Events) != len(got.Events) {
+			return fmt.Errorf("%s: events: v1 %d, v2 %d", want.Digest, len(want.Events), len(got.Events))
+		}
+		if fmt.Sprint(eventTypes(want.Events)) != fmt.Sprint(eventTypes(got.Events)) {
+			return fmt.Errorf("%s: event types: v1 %v, v2 %v", want.Digest, eventTypes(want.Events), eventTypes(got.Events))
+		}
+	}
+	return nil
+}
+
+func compareEffects(want, got *lib.TagJson[types.SuiTransactionBlockEffects]) error {
+	if want == nil || got == nil || want.Data.V1 == nil || got.Data.V1 == nil {
+		return fmt.Errorf("effects presence: v1 %v, v2 %v", want, got)
+	}
+	wantV1, gotV1 := want.Data.V1, got.Data.V1
+	if wantV1.Status != gotV1.Status {
+		return fmt.Errorf("effects.status: v1 %+v, v2 %+v", wantV1.Status, gotV1.Status)
+	}
+	if wantV1.GasUsed != gotV1.GasUsed {
+		return fmt.Errorf("effects.gasUsed: v1 %+v, v2 %+v", wantV1.GasUsed, gotV1.GasUsed)
+	}
+	if wantV1.ExecutedEpoch != gotV1.ExecutedEpoch {
+		return fmt.Errorf("effects.executedEpoch: v1 %v, v2 %v", wantV1.ExecutedEpoch, gotV1.ExecutedEpoch)
+	}
+	if wantV1.TransactionDigest.String() != gotV1.TransactionDigest.String() {
+		return fmt.Errorf("effects.transactionDigest: v1 %s, v2 %s", wantV1.TransactionDigest, gotV1.TransactionDigest)
+	}
+	if len(wantV1.AccumulatorEvents) > 0 || len(gotV1.AccumulatorEvents) > 0 {
+		wantJSON, _ := json.Marshal(wantV1.AccumulatorEvents)
+		gotJSON, _ := json.Marshal(gotV1.AccumulatorEvents)
+		if string(wantJSON) != string(gotJSON) {
+			return fmt.Errorf("effects.accumulatorEvents: v1 %s, v2 %s", wantJSON, gotJSON)
+		}
+	}
+	return nil
+}
+
+// MARK - Checkpoints
+
+func TestParityGetLatestCheckpointSequenceNumber(t *testing.T) {
+	env, ctx := parity(t), liveCtx(t)
+	fromV1, err := env.v1.GetLatestCheckpointSequenceNumber(ctx)
+	require.NoError(t, err)
+	fromV2, err := env.v2.GetLatestCheckpointSequenceNumber(ctx)
+	require.NoError(t, err)
+
+	seqV1, err := strconv.ParseUint(fromV1, 10, 64)
+	require.NoError(t, err, "v1 checkpoint height %q is not numeric", fromV1)
+	seqV2, err := strconv.ParseUint(fromV2, 10, 64)
+	require.NoError(t, err, "v2 checkpoint height %q is not numeric", fromV2)
+
+	delta := int64(seqV2) - int64(seqV1)
+	if delta < 0 {
+		delta = -delta
+	}
+	// Two independent nodes at the same tip; testnet does ~5 checkpoints/s so
+	// 600 is about two minutes of allowed lag.
+	require.LessOrEqual(t, delta, int64(600), "checkpoint heights too far apart: v1 %d, v2 %d", seqV1, seqV2)
+}
+
+func TestParityGetCheckpoint(t *testing.T) {
+	env, ctx := parity(t), liveCtx(t)
+	fromV1, err := env.v1.GetCheckpoint(ctx, env.seq)
+	require.NoError(t, err)
+	fromV2, err := env.v2.GetCheckpoint(ctx, env.seq)
+	require.NoError(t, err)
+	requireSameCheckpoint(t, fromV1, fromV2)
+}
+
+func TestParityGetCheckpoints(t *testing.T) {
+	env, ctx := parity(t), liveCtx(t)
+	const limit = 3
+	fromV1, err := env.v1.GetCheckpoints(ctx, env.seq, limit)
+	require.NoError(t, err)
+	fromV2, err := env.v2.GetCheckpoints(ctx, env.seq, limit)
+	require.NoError(t, err)
+
+	require.Len(t, fromV1, limit)
+	require.Len(t, fromV2, limit)
+	for i := range fromV1 {
+		require.Equal(t, env.seq+uint64(i), fromV1[i].SequenceNumber.Uint64())
+		requireSameCheckpoint(t, fromV1[i], fromV2[i])
+	}
+}
+
+func TestParityGetCheckpointTransactions(t *testing.T) {
+	env, ctx := parity(t), liveCtx(t)
+	options := types.SuiTransactionBlockResponseOptions{ShowEffects: true, ShowBalanceChanges: true}
+	fromV1, err := env.v1.GetCheckpointTransactions(ctx, env.seq, options)
+	require.NoError(t, err)
+	fromV2, err := env.v2.GetCheckpointTransactions(ctx, env.seq, options)
+	require.NoError(t, err)
+
+	byDigestV1 := make(map[string]*types.SuiTransactionBlockResponse, len(fromV1))
+	for _, tx := range fromV1 {
+		byDigestV1[tx.Digest.String()] = tx
+	}
+	require.Len(t, fromV2, len(fromV1), "different transaction counts for checkpoint %d", env.seq)
+	for _, txV2 := range fromV2 {
+		txV1, ok := byDigestV1[txV2.Digest.String()]
+		require.True(t, ok, "v2 returned digest %s missing from v1", txV2.Digest)
+		require.NoError(t, compareTxResponse(txV1, txV2, options))
+	}
+}
+
+// MARK - Transactions
+
+// fullOptions asks for everything both backends can serve. ShowInput is
+// exercised separately in TestParityRawTransaction because the two backends
+// disagree on what it returns (see the file header).
+var fullOptions = types.SuiTransactionBlockResponseOptions{
+	ShowEffects:        true,
+	ShowEvents:         true,
+	ShowBalanceChanges: true,
+}
+
+func TestParityGetTransactionBlock(t *testing.T) {
+	env, ctx := parity(t), liveCtx(t)
+	fromV1, err := env.v1.GetTransactionBlock(ctx, env.txDigest, fullOptions)
+	require.NoError(t, err)
+	fromV2, err := env.v2.GetTransactionBlock(ctx, env.txDigest, fullOptions)
+	require.NoError(t, err)
+	require.NoError(t, compareTxResponse(fromV1, fromV2, fullOptions))
+	require.NotEmpty(t, fromV1.BalanceChanges, "fixture transaction should have balance changes")
+}
+
+// TestParityRawTransaction pins down the documented RawTransaction gap: the
+// v2 backend surfaces bare BCS TransactionData under ShowInput, while v1 only
+// returns raw bytes for the wire-level showRawInput flag (not exposed by
+// types.SuiTransactionBlockResponseOptions) and wraps them in SenderSignedData:
+// vector length 1 + 3-byte intent, then TransactionData, then the signatures.
+func TestParityRawTransaction(t *testing.T) {
+	env, ctx := parity(t), liveCtx(t)
+
+	inputOptions := types.SuiTransactionBlockResponseOptions{ShowInput: true}
+	fromV2, err := env.v2.GetTransactionBlock(ctx, env.txDigest, inputOptions)
+	require.NoError(t, err)
+	require.NotEmpty(t, fromV2.RawTransaction, "v2 ShowInput should populate RawTransaction")
+
+	// v1 via the facade: ShowInput yields the parsed transaction, no raw bytes.
+	fromV1, err := env.v1.GetTransactionBlock(ctx, env.txDigest, inputOptions)
+	require.NoError(t, err)
+	require.Empty(t, fromV1.RawTransaction, "documented gap: v1 ShowInput has no raw bytes")
+	require.NotNil(t, fromV1.Transaction, "v1 ShowInput returns the parsed transaction")
+
+	// v1 with the raw wire flag, to compare actual bytes.
+	rawClient, err := client.Dial(env.jsonrpcEndpoint)
+	require.NoError(t, err)
+	var rawResp types.SuiTransactionBlockResponse
+	err = rawClient.CallContext(ctx, &rawResp, client.SuiMethod("getTransactionBlock"),
+		env.txDigest, map[string]bool{"showRawInput": true})
+	require.NoError(t, err)
+	require.NotEmpty(t, rawResp.RawTransaction)
+
+	// SenderSignedData framing around the same TransactionData bytes.
+	v1Raw, v2Raw := rawResp.RawTransaction, fromV2.RawTransaction
+	require.GreaterOrEqual(t, len(v1Raw), 4+len(v2Raw))
+	require.Equal(t, []byte{1, 0, 0, 0}, v1Raw[:4], "SenderSignedData vec length + intent prefix")
+	require.Equal(t, v2Raw, v1Raw[4:4+len(v2Raw)],
+		"v2 RawTransaction should be the TransactionData embedded in v1's SenderSignedData")
+}
+
+func TestParityMultiGetTransactionBlocks(t *testing.T) {
+	env, ctx := parity(t), liveCtx(t)
+	require.GreaterOrEqual(t, len(env.txDigests), 2, "fixture checkpoint should have at least 2 transactions")
+	digests := env.txDigests[:2]
+
+	fromV1, err := env.v1.MultiGetTransactionBlocks(ctx, digests, fullOptions)
+	require.NoError(t, err)
+	fromV2, err := env.v2.MultiGetTransactionBlocks(ctx, digests, fullOptions)
+	require.NoError(t, err)
+
+	require.Len(t, fromV1, len(digests))
+	require.Len(t, fromV2, len(digests))
+	for i, digest := range digests {
+		require.Equal(t, digest.String(), fromV1[i].Digest.String(), "v1 order")
+		require.Equal(t, digest.String(), fromV2[i].Digest.String(), "v2 order")
+		require.NoError(t, compareTxResponse(fromV1[i], fromV2[i], fullOptions))
+	}
+}
+
+// MARK - Coins & balances
+
+func TestParityGetBalance(t *testing.T) {
+	env, ctx := parity(t), liveCtx(t)
+	addr := env.coinAddr
+	if env.accumAddr != nil {
+		addr = *env.accumAddr // prefer an address with SIP-58 address-balance funds
+	}
+
+	retryVolatile(t, func() error {
+		fromV1, err := env.v1.GetBalance(ctx, addr, types.SUI_COIN_TYPE)
+		if err != nil {
+			return err
+		}
+		fromV2, err := env.v2.GetBalance(ctx, addr, types.SUI_COIN_TYPE)
+		if err != nil {
+			return err
+		}
+		if fromV1.CoinType != fromV2.CoinType {
+			return fmt.Errorf("coinType: v1 %s, v2 %s", fromV1.CoinType, fromV2.CoinType)
+		}
+		if !fromV1.TotalBalance.Equal(fromV2.TotalBalance) {
+			return fmt.Errorf("totalBalance: v1 %s, v2 %s", fromV1.TotalBalance, fromV2.TotalBalance)
+		}
+		if !fromV1.FundsInAddressBalance.Equal(fromV2.FundsInAddressBalance) {
+			return fmt.Errorf("fundsInAddressBalance: v1 %s, v2 %s",
+				fromV1.FundsInAddressBalance, fromV2.FundsInAddressBalance)
+		}
+		return nil
+	})
+}
+
+func TestParityGetAllBalances(t *testing.T) {
+	env, ctx := parity(t), liveCtx(t)
+
+	type balancePair struct{ total, funds string }
+	snapshot := func(balances []types.Balance) map[string]balancePair {
+		out := make(map[string]balancePair, len(balances))
+		for _, balance := range balances {
+			out[balance.CoinType] = balancePair{
+				total: balance.TotalBalance.String(),
+				funds: balance.FundsInAddressBalance.String(),
+			}
+		}
+		return out
+	}
+
+	retryVolatile(t, func() error {
+		fromV1, err := env.v1.GetAllBalances(ctx, env.coinAddr)
+		if err != nil {
+			return err
+		}
+		fromV2, err := env.v2.GetAllBalances(ctx, env.coinAddr)
+		if err != nil {
+			return err
+		}
+		mapV1, mapV2 := snapshot(fromV1), snapshot(fromV2)
+		if len(mapV1) != len(mapV2) {
+			return fmt.Errorf("coin type counts: v1 %v, v2 %v", mapV1, mapV2)
+		}
+		for coinType, pairV1 := range mapV1 {
+			pairV2, ok := mapV2[coinType]
+			if !ok {
+				return fmt.Errorf("coin type %s missing from v2: v1 %v, v2 %v", coinType, mapV1, mapV2)
+			}
+			if pairV1 != pairV2 {
+				return fmt.Errorf("balance for %s: v1 %+v, v2 %+v", coinType, pairV1, pairV2)
+			}
+		}
+		return nil
+	})
+}
+
+// allCoins drains every GetCoins page with the given page size, asserting
+// along the way that each backend's own opaque cursor yields pages disjoint
+// from the ones before it.
+func allCoins(ctx context.Context, backend SuiClient, owner sui_types.SuiAddress, pageSize uint) (map[string]uint64, error) {
+	seen := make(map[string]uint64)
+	var cursor *string
+	for page := 0; ; page++ {
+		if page > 50 {
+			return nil, fmt.Errorf("more than %d pages, aborting", page)
+		}
+		resp, err := backend.GetCoins(ctx, owner, nil, cursor, pageSize)
+		if err != nil {
+			return nil, err
+		}
+		for _, coin := range resp.Data {
+			id := coin.CoinObjectId.String()
+			if _, dup := seen[id]; dup {
+				return nil, fmt.Errorf("coin %s repeated across pages (cursor not advancing)", id)
+			}
+			seen[id] = coin.Balance.Uint64()
+		}
+		if !resp.HasNextPage || resp.NextCursor == nil {
+			return seen, nil
+		}
+		cursor = resp.NextCursor
+	}
+}
+
+func TestParityGetCoins(t *testing.T) {
+	env, ctx := parity(t), liveCtx(t)
+
+	retryVolatile(t, func() error {
+		fromV1, err := allCoins(ctx, env.v1, env.coinAddr, 5)
+		if err != nil {
+			return fmt.Errorf("v1: %w", err)
+		}
+		fromV2, err := allCoins(ctx, env.v2, env.coinAddr, 5)
+		if err != nil {
+			return fmt.Errorf("v2: %w", err)
+		}
+		if len(fromV1) == 0 {
+			return fmt.Errorf("fixture address %s has no coins", env.coinAddr)
+		}
+		if fmt.Sprint(fromV1) != fmt.Sprint(fromV2) {
+			return fmt.Errorf("coin sets differ: v1 %v, v2 %v", fromV1, fromV2)
+		}
+
+		// With more than one coin, a page size of 1 forces a multi-page walk,
+		// exercising each backend's own opaque cursor. Page disjointness is
+		// asserted inside allCoins via its duplicate check.
+		if len(fromV1) < 2 {
+			t.Logf("fixture address %s has %d coin(s); multi-page cursor walk not exercised", env.coinAddr, len(fromV1))
+			return nil
+		}
+		pagedV1, err := allCoins(ctx, env.v1, env.coinAddr, 1)
+		if err != nil {
+			return fmt.Errorf("v1 paged: %w", err)
+		}
+		pagedV2, err := allCoins(ctx, env.v2, env.coinAddr, 1)
+		if err != nil {
+			return fmt.Errorf("v2 paged: %w", err)
+		}
+		if fmt.Sprint(pagedV1) != fmt.Sprint(pagedV2) {
+			return fmt.Errorf("paged coin sets differ: v1 %v, v2 %v", pagedV1, pagedV2)
+		}
+		return nil
+	})
+}
+
+func TestParityGetCoinMetadata(t *testing.T) {
+	env, ctx := parity(t), liveCtx(t)
+	fromV1, err := env.v1.GetCoinMetadata(ctx, types.SUI_COIN_TYPE)
+	require.NoError(t, err)
+	fromV2, err := env.v2.GetCoinMetadata(ctx, types.SUI_COIN_TYPE)
+	require.NoError(t, err)
+
+	require.Equal(t, fromV1.Decimals, fromV2.Decimals)
+	require.Equal(t, fromV1.Symbol, fromV2.Symbol)
+	require.Equal(t, fromV1.Name, fromV2.Name)
+	require.EqualValues(t, 9, fromV2.Decimals)
+	require.Equal(t, "SUI", fromV2.Symbol)
+}
+
+func TestParityGetReferenceGasPrice(t *testing.T) {
+	env, ctx := parity(t), liveCtx(t)
+	// Retried because the price can legitimately move between the two reads at
+	// an epoch boundary.
+	retryVolatile(t, func() error {
+		fromV1, err := env.v1.GetReferenceGasPrice(ctx)
+		if err != nil {
+			return err
+		}
+		fromV2, err := env.v2.GetReferenceGasPrice(ctx)
+		if err != nil {
+			return err
+		}
+		if fromV1.Uint64() != fromV2.Uint64() {
+			return fmt.Errorf("reference gas price: v1 %d, v2 %d", fromV1.Uint64(), fromV2.Uint64())
+		}
+		if fromV2.Uint64() == 0 {
+			return fmt.Errorf("reference gas price is zero")
+		}
+		return nil
+	})
+}
+
+// MARK - Simulation
+
+// trivialPTB builds SplitCoins(gas, [1000]) + TransferObjects([split], sender):
+// the simplest transaction that touches gas, produces effects and balance
+// changes, and needs no owned-object fixtures.
+func trivialPTB(t *testing.T, sender sui_types.SuiAddress) sui_types.ProgrammableTransaction {
+	t.Helper()
+	ptb := sui_types.NewProgrammableTransactionBuilder()
+	amount, err := ptb.Pure(uint64(1000))
+	require.NoError(t, err)
+	split := ptb.Command(sui_types.Command{
+		SplitCoins: &sui_types.SplitCoinsCommand{
+			Argument:  sui_types.Argument{GasCoin: &lib.EmptyEnum{}},
+			Arguments: []sui_types.Argument{amount},
+		},
+	})
+	recipient, err := ptb.Pure(sender)
+	require.NoError(t, err)
+	ptb.Command(sui_types.Command{
+		TransferObjects: &sui_types.TransferObjectsCommand{
+			Arguments: []sui_types.Argument{split},
+			Argument:  recipient,
+		},
+	})
+	return ptb.Finish()
+}
+
+func TestParityDevInspectTransactionBlock(t *testing.T) {
+	env, ctx := parity(t), liveCtx(t)
+	sender := env.coinAddr
+
+	pt := trivialPTB(t, sender)
+	kindBytes, err := bcs.Marshal(sui_types.TransactionKind{ProgrammableTransaction: &pt})
+	require.NoError(t, err)
+
+	fromV1, err := env.v1.DevInspectTransactionBlock(ctx, sender, kindBytes, nil, nil)
+	require.NoError(t, err)
+	fromV2, err := env.v2.DevInspectTransactionBlock(ctx, sender, kindBytes, nil, nil)
+	require.NoError(t, err)
+
+	// Costs may differ slightly between the two execution paths; parity here
+	// is "both succeed and report a real computation cost".
+	for backend, result := range map[string]*types.DevInspectResults{"v1": fromV1, "v2": fromV2} {
+		require.NotNil(t, result.Effects.Data.V1, "%s effects", backend)
+		require.Equal(t, types.ExecutionStatusSuccess, result.Effects.Data.V1.Status.Status,
+			"%s status (error: %s)", backend, result.Effects.Data.V1.Status.Error)
+		require.Positive(t, result.Effects.Data.V1.GasUsed.ComputationCost.Uint64(), "%s computationCost", backend)
+	}
+}
+
+func TestParityDryRunTransaction(t *testing.T) {
+	env, ctx := parity(t), liveCtx(t)
+	sender := env.coinAddr
+
+	price, err := env.v2.GetReferenceGasPrice(ctx)
+	require.NoError(t, err)
+
+	retryVolatile(t, func() error {
+		// Re-resolve the gas coin each attempt: the fixture address is a live
+		// account and can spend/receive between reads.
+		const gasBudget = uint64(10_000_000)
+		coins, err := env.v1.GetCoins(ctx, sender, nil, nil, 50)
+		if err != nil {
+			return err
+		}
+		var gasCoin *types.Coin
+		for i := range coins.Data {
+			if coins.Data[i].Balance.Uint64() >= 2*gasBudget {
+				gasCoin = &coins.Data[i]
+				break
+			}
+		}
+		if gasCoin == nil {
+			t.Skipf("no coin with balance >= %d on fixture address %s", 2*gasBudget, sender)
+		}
+
+		pt := trivialPTB(t, sender)
+		txData := sui_types.NewProgrammable(sender, []*sui_types.ObjectRef{gasCoin.Reference()}, pt, gasBudget, price.Uint64())
+		txBytes, err := bcs.Marshal(txData)
+		if err != nil {
+			return err
+		}
+
+		fromV1, err := env.v1.DryRunTransaction(ctx, txBytes)
+		if err != nil {
+			return err
+		}
+		fromV2, err := env.v2.DryRunTransaction(ctx, txBytes)
+		if err != nil {
+			return err
+		}
+		if fromV1.Effects.Data.V1 == nil || fromV2.Effects.Data.V1 == nil {
+			return fmt.Errorf("effects presence: v1 %+v, v2 %+v", fromV1.Effects, fromV2.Effects)
+		}
+		if fromV1.Effects.Data.V1.Status != fromV2.Effects.Data.V1.Status {
+			return fmt.Errorf("status: v1 %+v, v2 %+v", fromV1.Effects.Data.V1.Status, fromV2.Effects.Data.V1.Status)
+		}
+		wantKeys := balanceChangeKeys(fromV1.BalanceChanges)
+		gotKeys := balanceChangeKeys(fromV2.BalanceChanges)
+		if fmt.Sprint(wantKeys) != fmt.Sprint(gotKeys) {
+			return fmt.Errorf("balanceChanges: v1 %v, v2 %v", wantKeys, gotKeys)
+		}
+		return nil
+	})
+}

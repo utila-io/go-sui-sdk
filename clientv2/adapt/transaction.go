@@ -50,6 +50,9 @@ func PrefixPaths(prefix string, paths []string) []string {
 // fields not requested via options. The parsed Transaction field is not
 // reconstructed; ShowInput surfaces the raw BCS TransactionData instead.
 func Response(tx *pb.ExecutedTransaction) *types.SuiTransactionBlockResponse {
+	if tx == nil {
+		return nil
+	}
 	response := &types.SuiTransactionBlockResponse{
 		Digest:         parseDigest(tx.GetDigest()),
 		RawTransaction: tx.GetTransaction().GetBcs().GetValue(),

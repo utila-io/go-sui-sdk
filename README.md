@@ -15,6 +15,41 @@ go get github.com/coming-chat/go-sui/v2
 
 
 
+## Backends: JSON-RPC (v1) and gRPC (v2)
+
+Sui is retiring its public JSON-RPC endpoints in favor of the
+[gRPC API](https://docs.sui.io/concepts/data-access/grpc-overview) (`sui.rpc.v2`).
+This SDK supports both behind one interface; select the backend with a flag:
+
+```go
+import "github.com/utila-io/go-sui-sdk/suiclient"
+
+// Default: JSON-RPC (unchanged behavior)
+cli, err := suiclient.New(endpoint)
+
+// Opt into gRPC
+cli, err := suiclient.New(endpoint, suiclient.WithBackend(suiclient.BackendGRPC))
+defer cli.Close()
+
+bal, err := cli.GetBalance(ctx, owner, "") // same interface either way
+```
+
+The backend can also be forced at runtime with `SUI_SDK_BACKEND=v1|v2`
+(an explicit `WithBackend` always wins). The `suiclient.SuiClient` interface
+contains only methods both backends fully support: balances & coins (including
+SIP-58 address balances and `accumulatorEvents` on effects), objects,
+transaction reads/execution/simulation, and checkpoints.
+
+Not on the interface (JSON-RPC concrete `client.Client` only): the `unsafe_*`
+server-side transaction builders, faucet, staking/APY reads, and arbitrary
+`queryTransactionBlocks`/`queryEvents` filters — build transactions locally
+with `sui_types.ProgrammableTransactionBuilder` instead, and enumerate
+checkpoint transactions with `GetCheckpointTransactions`.
+
+The gRPC bindings are generated from protos vendored at a pinned commit of
+[MystenLabs/sui-apis](https://github.com/MystenLabs/sui-apis); see the
+`Makefile` (`make proto-update`) to update them.
+
 ## Usage
 
 ### Account
