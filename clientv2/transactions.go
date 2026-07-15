@@ -1,0 +1,84 @@
+package clientv2
+
+import (
+	"context"
+	"fmt"
+
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
+
+	"github.com/utila-io/go-sui-sdk/clientv2/adapt"
+	pb "github.com/utila-io/go-sui-sdk/clientv2/internal/pb/sui/rpc/v2"
+	"github.com/utila-io/go-sui-sdk/sui_types"
+	"github.com/utila-io/go-sui-sdk/types"
+)
+
+// batchTransactionsChunkSize caps the number of digests per
+// BatchGetTransactions request.
+const batchTransactionsChunkSize = 50
+
+// GetTransactionBlock returns the executed transaction, shaped per options.
+func (c *Client) GetTransactionBlock(
+	ctx context.Context,
+	digest sui_types.TransactionDigest,
+	options types.SuiTransactionBlockResponseOptions,
+) (*types.SuiTransactionBlockResponse, error) {
+	resp, err := c.ledger.GetTransaction(ctx, &pb.GetTransactionRequest{
+		Digest:   proto.String(digest.String()),
+		ReadMask: &fieldmaskpb.FieldMask{Paths: adapt.ResponseReadMaskPaths(options)},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("GetTransactionBlock: %w", err)
+	}
+	return adapt.Response(resp.GetTransaction()), nil
+}
+
+// MultiGetTransactionBlocks returns the executed transactions in digest
+// order. Like JSON-RPC, any unknown digest fails the whole call.
+func (c *Client) MultiGetTransactionBlocks(
+	ctx context.Context,
+	digests []sui_types.TransactionDigest,
+	options types.SuiTransactionBlockResponseOptions,
+) ([]*types.SuiTransactionBlockResponse, error) {
+	digestStrs := make([]string, len(digests))
+	for i, digest := range digests {
+		digestStrs[i] = digest.String()
+	}
+	responses, err := c.batchGetTransactions(ctx, digestStrs, options)
+	if err != nil {
+		return nil, fmt.Errorf("MultiGetTransactionBlocks: %w", err)
+	}
+	return responses, nil
+}
+
+// batchGetTransactions fetches transactions via BatchGetTransactions in
+// chunks, preserving digest order. The first per-item error fails the call.
+func (c *Client) batchGetTransactions(
+	ctx context.Context,
+	digests []string,
+	options types.SuiTransactionBlockResponseOptions,
+) ([]*types.SuiTransactionBlockResponse, error) {
+	readMask := &fieldmaskpb.FieldMask{Paths: adapt.ResponseReadMaskPaths(options)}
+	responses := make([]*types.SuiTransactionBlockResponse, 0, len(digests))
+	for start := 0; start < len(digests); start += batchTransactionsChunkSize {
+		end := min(start+batchTransactionsChunkSize, len(digests))
+		resp, err := c.ledger.BatchGetTransactions(ctx, &pb.BatchGetTransactionsRequest{
+			Digests:  digests[start:end],
+			ReadMask: readMask,
+		})
+		if err != nil {
+			return nil, err
+		}
+		results := resp.GetTransactions()
+		if len(results) != end-start {
+			return nil, fmt.Errorf("got %d results for %d digests", len(results), end-start)
+		}
+		for i, result := range results {
+			if resultErr := result.GetError(); resultErr != nil {
+				return nil, fmt.Errorf("transaction %s: %s", digests[start+i], resultErr.GetMessage())
+			}
+			responses = append(responses, adapt.Response(result.GetTransaction()))
+		}
+	}
+	return responses, nil
+}
