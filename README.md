@@ -48,7 +48,8 @@ checkpoint transactions with `GetCheckpointTransactions`.
 
 The gRPC bindings are generated from protos vendored at a pinned commit of
 [MystenLabs/sui-apis](https://github.com/MystenLabs/sui-apis); see the
-`Makefile` (`make proto-update`) to update them.
+`Makefile` (`make proto-update`) to update them. Note that grpc-go raises
+the module's minimum Go version to 1.25.
 
 ## Usage
 

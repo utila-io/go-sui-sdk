@@ -18,6 +18,16 @@ type jsonrpcBackend struct {
 	c *client.Client
 }
 
+const (
+	// multiGetTransactionsChunkSize caps the number of digests per
+	// sui_multiGetTransactionBlocks call (the JSON-RPC multi-get limit),
+	// mirroring clientv2's batchTransactionsChunkSize.
+	multiGetTransactionsChunkSize = 50
+	// checkpointsPageLimit is the maximum page size sui_getCheckpoints
+	// accepts (the JSON-RPC query result limit).
+	checkpointsPageLimit = 100
+)
+
 var _ SuiClient = (*jsonrpcBackend)(nil)
 
 // MARK - Coins & balances
@@ -86,8 +96,17 @@ func (b *jsonrpcBackend) MultiGetTransactionBlocks(
 	digests []sui_types.TransactionDigest,
 	options types.SuiTransactionBlockResponseOptions,
 ) ([]*types.SuiTransactionBlockResponse, error) {
-	var resp []*types.SuiTransactionBlockResponse
-	return resp, b.c.CallContext(ctx, &resp, client.SuiMethod("multiGetTransactionBlocks"), digests, options)
+	responses := make([]*types.SuiTransactionBlockResponse, 0, len(digests))
+	for start := 0; start < len(digests); start += multiGetTransactionsChunkSize {
+		end := min(start+multiGetTransactionsChunkSize, len(digests))
+		var chunk []*types.SuiTransactionBlockResponse
+		err := b.c.CallContext(ctx, &chunk, client.SuiMethod("multiGetTransactionBlocks"), digests[start:end], options)
+		if err != nil {
+			return nil, err
+		}
+		responses = append(responses, chunk...)
+	}
+	return responses, nil
 }
 
 func (b *jsonrpcBackend) ExecuteTransactionBlock(
@@ -127,23 +146,38 @@ func (b *jsonrpcBackend) GetCheckpoint(ctx context.Context, seqNum uint64) (*typ
 }
 
 func (b *jsonrpcBackend) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit int) ([]*types.Checkpoint, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
 	// The sui_getCheckpoints cursor is exclusive: nil starts from genesis,
-	// otherwise pass the checkpoint just before startSeqNum.
+	// otherwise pass the checkpoint just before startSeqNum. Subsequent pages
+	// resume from the returned nextCursor.
 	var cursor any
 	if startSeqNum > 0 {
 		cursor = fmt.Sprint(startSeqNum - 1)
 	}
 
-	var page struct {
-		Data        []*types.Checkpoint `json:"data"`
-		NextCursor  string              `json:"nextCursor"`
-		HasNextPage bool                `json:"hasNextPage"`
+	var checkpoints []*types.Checkpoint
+	for len(checkpoints) < limit {
+		pageSize := min(limit-len(checkpoints), checkpointsPageLimit)
+		var page struct {
+			Data        []*types.Checkpoint `json:"data"`
+			NextCursor  string              `json:"nextCursor"`
+			HasNextPage bool                `json:"hasNextPage"`
+		}
+		err := b.c.CallContext(ctx, &page, client.SuiMethod("getCheckpoints"), cursor, pageSize, false /* descending */)
+		if err != nil {
+			return nil, err
+		}
+		checkpoints = append(checkpoints, page.Data...)
+		// The empty-data check guards against re-fetching the same page
+		// forever should the node ever report hasNextPage without advancing.
+		if !page.HasNextPage || page.NextCursor == "" || len(page.Data) == 0 {
+			break
+		}
+		cursor = page.NextCursor
 	}
-	err := b.c.CallContext(ctx, &page, client.SuiMethod("getCheckpoints"), cursor, limit, false /* descending */)
-	if err != nil {
-		return nil, err
-	}
-	return page.Data, nil
+	return checkpoints, nil
 }
 
 func (b *jsonrpcBackend) GetCheckpointTransactions(

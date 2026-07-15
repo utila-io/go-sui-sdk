@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
+	"sync/atomic"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -33,23 +35,64 @@ func (c *Client) GetCheckpoint(ctx context.Context, seqNum uint64) (*types.Check
 	return adapt.Checkpoint(checkpoint), nil
 }
 
+// checkpointFetchConcurrency caps the number of parallel GetCheckpoint calls
+// issued by GetCheckpoints.
+const checkpointFetchConcurrency = 8
+
 // GetCheckpoints returns up to limit sequential checkpoints starting at
 // startSeqNum (inclusive), in ascending order. Like the JSON-RPC page, it ends
 // early at the tip of the chain: checkpoints past the last known one are
-// simply not included.
+// simply not included. A limit <= 0 yields no checkpoints, like the v1
+// backend.
 func (c *Client) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit int) ([]*types.Checkpoint, error) {
-	checkpoints := make([]*types.Checkpoint, 0, limit)
-	for seqNum := startSeqNum; seqNum < startSeqNum+uint64(limit); seqNum++ {
-		checkpoint, err := c.getCheckpoint(ctx, seqNum, adapt.CheckpointReadMaskPaths)
-		if status.Code(err) == codes.NotFound {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("GetCheckpoints: %w", err)
-		}
-		checkpoints = append(checkpoints, adapt.Checkpoint(checkpoint))
+	if limit <= 0 {
+		return nil, nil
 	}
-	return checkpoints, nil
+	// The range is fetched with bounded concurrency. firstMissing tracks the
+	// lowest offset that came back NotFound so later offsets can skip their
+	// fetch: checkpoints are contiguous, so everything past the first missing
+	// one is missing too. Offsets below firstMissing are never skipped, which
+	// keeps the collected prefix hole-free.
+	var (
+		checkpoints  = make([]*pb.Checkpoint, limit)
+		errs         = make([]error, limit)
+		semaphore    = make(chan struct{}, checkpointFetchConcurrency)
+		wg           sync.WaitGroup
+		firstMissing atomic.Int64
+	)
+	firstMissing.Store(int64(limit))
+	for i := range limit {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+			if int64(i) >= firstMissing.Load() {
+				return
+			}
+			checkpoint, err := c.getCheckpoint(ctx, startSeqNum+uint64(i), adapt.CheckpointReadMaskPaths)
+			if status.Code(err) == codes.NotFound {
+				// Lower firstMissing to i (it only ever decreases).
+				for current := firstMissing.Load(); int64(i) < current; current = firstMissing.Load() {
+					if firstMissing.CompareAndSwap(current, int64(i)) {
+						break
+					}
+				}
+				return
+			}
+			checkpoints[i], errs[i] = checkpoint, err
+		}()
+	}
+	wg.Wait()
+
+	out := make([]*types.Checkpoint, 0, firstMissing.Load())
+	for i := range int(firstMissing.Load()) {
+		if errs[i] != nil {
+			return nil, fmt.Errorf("GetCheckpoints: %w", errs[i])
+		}
+		out = append(out, adapt.Checkpoint(checkpoints[i]))
+	}
+	return out, nil
 }
 
 // GetCheckpointTransactions returns every transaction in the checkpoint,

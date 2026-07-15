@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"slices"
 
 	pb "github.com/utila-io/go-sui-sdk/clientv2/internal/pb/sui/rpc/v2"
 	"github.com/utila-io/go-sui-sdk/lib"
@@ -75,11 +76,17 @@ func Response(tx *pb.ExecutedTransaction, options types.SuiTransactionBlockRespo
 			}
 		}
 	}
-	if effects := Effects(tx.GetEffects()); effects != nil {
+	effects, effectsErrs := Effects(tx.GetEffects())
+	if effects != nil {
 		response.Effects = &lib.TagJson[types.SuiTransactionBlockEffects]{Data: *effects}
 	}
-	response.Events = Events(tx.GetDigest(), tx.GetEvents())
-	response.BalanceChanges = BalanceChanges(tx.GetBalanceChanges())
+	events, eventErrs := Events(tx.GetDigest(), tx.GetEvents())
+	response.Events = events
+	balanceChanges, balanceErrs := BalanceChanges(tx.GetBalanceChanges())
+	response.BalanceChanges = balanceChanges
+	for _, err := range slices.Concat(effectsErrs, eventErrs, balanceErrs) {
+		response.Errors = append(response.Errors, err.Error())
+	}
 	if tx.Timestamp != nil {
 		timestampMs := types.NewSafeSuiBigInt(uint64(tx.GetTimestamp().AsTime().UnixMilli()))
 		response.TimestampMs = &timestampMs
@@ -93,18 +100,23 @@ func Response(tx *pb.ExecutedTransaction, options types.SuiTransactionBlockRespo
 
 // Events converts proto TransactionEvents into the JSON-RPC event list.
 // Event sequence numbers are the event's index within the transaction.
-func Events(txDigest string, events *pb.TransactionEvents) []types.SuiEvent {
+// Events that cannot be parsed are dropped and reported in the returned error
+// slice; the rest are still converted.
+func Events(txDigest string, events *pb.TransactionEvents) ([]types.SuiEvent, []error) {
 	if events == nil {
-		return nil
+		return nil, nil
 	}
+	var errs []error
 	out := make([]types.SuiEvent, 0, len(events.GetEvents()))
 	for i, event := range events.GetEvents() {
 		packageID, err := parseAddress(event.GetPackageId())
 		if err != nil {
+			errs = append(errs, fmt.Errorf("event %d: package: %w", i, err))
 			continue
 		}
 		sender, err := parseAddress(event.GetSender())
 		if err != nil {
+			errs = append(errs, fmt.Errorf("event %d: sender: %w", i, err))
 			continue
 		}
 		out = append(out, types.SuiEvent{
@@ -120,19 +132,23 @@ func Events(txDigest string, events *pb.TransactionEvents) []types.SuiEvent {
 			Bcs:               lib.Base58(event.GetContents().GetValue()).String(),
 		})
 	}
-	return out
+	return out, errs
 }
 
 // BalanceChanges converts proto balance changes into the JSON-RPC shape.
 // Owner addresses stay long form; coin types are normalized to short form.
-func BalanceChanges(changes []*pb.BalanceChange) []types.BalanceChange {
+// Changes whose owner address cannot be parsed are dropped and reported in
+// the returned error slice; the rest are still converted.
+func BalanceChanges(changes []*pb.BalanceChange) ([]types.BalanceChange, []error) {
 	if len(changes) == 0 {
-		return nil
+		return nil, nil
 	}
+	var errs []error
 	out := make([]types.BalanceChange, 0, len(changes))
-	for _, change := range changes {
+	for i, change := range changes {
 		addr, err := parseAddress(change.GetAddress())
 		if err != nil {
+			errs = append(errs, fmt.Errorf("balance change %d: owner: %w", i, err))
 			continue
 		}
 		out = append(out, types.BalanceChange{
@@ -143,7 +159,55 @@ func BalanceChanges(changes []*pb.BalanceChange) []types.BalanceChange {
 			Amount:   change.GetAmount(),
 		})
 	}
-	return out
+	return out, errs
+}
+
+// ExecutionResults converts SimulateTransaction per-command outputs into the
+// JSON-RPC dev-inspect results shape: per command, the mutable reference
+// outputs as (argument, bytes, type) triples and the return values as
+// (bytes, type) pairs. Bytes are []byte (rendered as base64 by
+// encoding/json) and types are normalized to short form.
+func ExecutionResults(outputs []*pb.CommandResult) []types.ExecutionResultType {
+	if len(outputs) == 0 {
+		return nil
+	}
+	results := make([]types.ExecutionResultType, len(outputs))
+	for i, output := range outputs {
+		for _, mutated := range output.GetMutatedByRef() {
+			results[i].MutableReferenceOutputs = append(results[i].MutableReferenceOutputs,
+				types.MutableReferenceOutputType([]any{
+					commandArgument(mutated.GetArgument()),
+					mutated.GetValue().GetValue(),
+					NormalizeTypeString(mutated.GetValue().GetName()),
+				}))
+		}
+		for _, returned := range output.GetReturnValues() {
+			results[i].ReturnValues = append(results[i].ReturnValues,
+				types.ReturnValueType([]any{
+					returned.GetValue().GetValue(),
+					NormalizeTypeString(returned.GetValue().GetName()),
+				}))
+		}
+	}
+	return results
+}
+
+// commandArgument renders a proto Argument in the JSON-RPC SuiArgument shape:
+// "GasCoin", {"Input": n}, {"Result": n} or {"NestedResult": [n, m]}.
+func commandArgument(arg *pb.Argument) any {
+	switch arg.GetKind() {
+	case pb.Argument_GAS:
+		return "GasCoin"
+	case pb.Argument_INPUT:
+		return map[string]any{"Input": arg.GetInput()}
+	case pb.Argument_RESULT:
+		if arg.Subresult != nil {
+			return map[string]any{"NestedResult": []any{arg.GetResult(), arg.GetSubresult()}}
+		}
+		return map[string]any{"Result": arg.GetResult()}
+	default:
+		return nil
+	}
 }
 
 // SignatureBytes extracts the raw serialized signature (flag || sig || pubkey)

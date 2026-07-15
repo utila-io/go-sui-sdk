@@ -49,7 +49,13 @@ func New(endpoint string, opts ...Option) (SuiClient, error) {
 		}
 		return &jsonrpcBackend{c: c}, nil
 	case BackendGRPC:
-		return clientv2.NewClient(endpoint, cfg.grpcDialOptions...)
+		// Not returned directly: that would wrap a typed-nil *clientv2.Client
+		// in a non-nil SuiClient interface on error.
+		c, err := clientv2.NewClient(endpoint, cfg.grpcDialOptions...)
+		if err != nil {
+			return nil, err
+		}
+		return c, nil
 	default:
 		return nil, fmt.Errorf("suiclient: unknown backend %d", backend)
 	}

@@ -43,7 +43,11 @@ func parseAddress(str string) (sui_types.SuiAddress, error) {
 }
 
 // parseDigest converts a proto base58 digest string into a sui_types.Digest.
+// Invalid base58 input decodes to an empty digest rather than an error: the
+// digests handled here come from the node, which only emits canonical base58,
+// so the empty-digest case is unreachable in practice and not worth threading
+// an error through every adapter for.
 func parseDigest(str string) sui_types.Digest {
-	digest, _ := lib.NewBase58(str) // never fails: invalid chars decode to empty
+	digest, _ := lib.NewBase58(str) // invalid chars decode to empty
 	return *digest
 }

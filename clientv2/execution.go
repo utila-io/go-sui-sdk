@@ -66,11 +66,11 @@ func (c *Client) ExecuteTransactionBlock(
 // The Input field of the response is not reconstructed from the transaction
 // bytes (JSON-RPC-only shape) and stays zero.
 func (c *Client) DryRunTransaction(ctx context.Context, txBytes lib.Base64Data) (*types.DryRunTransactionBlockResponse, error) {
-	tx, err := c.simulate(ctx, txBytes.Data(), pb.SimulateTransactionRequest_ENABLED)
+	resp, err := c.simulate(ctx, txBytes.Data(), pb.SimulateTransactionRequest_ENABLED)
 	if err != nil {
 		return nil, fmt.Errorf("DryRunTransaction: %w", err)
 	}
-	response := adapt.Response(tx, simulateOptions)
+	response := adapt.Response(resp.GetTransaction(), simulateOptions)
 	out := &types.DryRunTransactionBlockResponse{
 		Events:         response.Events,
 		BalanceChanges: response.BalanceChanges,
@@ -105,12 +105,15 @@ func (c *Client) DevInspectTransactionBlock(
 		price = referencePrice.Uint64()
 	}
 	txData := adapt.DevInspectTransactionData(sender, txKindBytes.Data(), price)
-	tx, err := c.simulate(ctx, txData, pb.SimulateTransactionRequest_DISABLED)
+	resp, err := c.simulate(ctx, txData, pb.SimulateTransactionRequest_DISABLED, "command_outputs")
 	if err != nil {
 		return nil, fmt.Errorf("DevInspectTransactionBlock: %w", err)
 	}
-	response := adapt.Response(tx, simulateOptions)
-	out := &types.DevInspectResults{Events: response.Events}
+	response := adapt.Response(resp.GetTransaction(), simulateOptions)
+	out := &types.DevInspectResults{
+		Events:  response.Events,
+		Results: adapt.ExecutionResults(resp.GetCommandOutputs()),
+	}
 	if response.Effects != nil {
 		out.Effects = *response.Effects
 		if response.Effects.Data.V1 != nil && response.Effects.Data.V1.Status.Error != "" {
@@ -122,21 +125,21 @@ func (c *Client) DevInspectTransactionBlock(
 }
 
 // simulate runs SimulateTransaction on raw BCS TransactionData bytes and
-// returns the simulated ExecutedTransaction with effects, events and balance
-// changes populated.
+// returns the response with the simulated transaction's effects, events and
+// balance changes populated. extraPaths are additional response-relative read
+// mask paths (e.g. "command_outputs"); the transaction paths themselves are
+// rebased onto the response-relative mask here.
 func (c *Client) simulate(
 	ctx context.Context,
 	txData []byte,
 	checks pb.SimulateTransactionRequest_TransactionChecks,
-) (*pb.ExecutedTransaction, error) {
-	paths := adapt.ResponseReadMaskPaths(simulateOptions)
-	resp, err := c.exec.SimulateTransaction(ctx, &pb.SimulateTransactionRequest{
+	extraPaths ...string,
+) (*pb.SimulateTransactionResponse, error) {
+	paths := adapt.PrefixPaths(simulateReadMaskPrefix, adapt.ResponseReadMaskPaths(simulateOptions))
+	paths = append(paths, extraPaths...)
+	return c.exec.SimulateTransaction(ctx, &pb.SimulateTransactionRequest{
 		Transaction: &pb.Transaction{Bcs: &pb.Bcs{Value: txData}},
-		ReadMask:    &fieldmaskpb.FieldMask{Paths: adapt.PrefixPaths(simulateReadMaskPrefix, paths)},
+		ReadMask:    &fieldmaskpb.FieldMask{Paths: paths},
 		Checks:      checks.Enum(),
 	})
-	if err != nil {
-		return nil, err
-	}
-	return resp.GetTransaction(), nil
 }
