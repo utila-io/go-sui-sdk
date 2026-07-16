@@ -10,11 +10,9 @@ import (
 type Backend int
 
 const (
-	// BackendJSONRPC serves the interface over the legacy JSON-RPC API via the
-	// client package. It is the default backend.
+	// BackendJSONRPC is the default backend (legacy JSON-RPC, client package).
 	BackendJSONRPC Backend = iota
-	// BackendGRPC serves the interface over the sui.rpc.v2 gRPC API via the
-	// clientv2 package.
+	// BackendGRPC serves the sui.rpc.v2 gRPC API via the clientv2 package.
 	BackendGRPC
 )
 
@@ -35,6 +33,7 @@ type config struct {
 	backend         *Backend
 	httpClient      *http.Client
 	grpcDialOptions []grpc.DialOption
+	grpcConn        grpc.ClientConnInterface
 }
 
 // Option configures New.
@@ -56,11 +55,21 @@ func WithHTTPClient(hc *http.Client) Option {
 	}
 }
 
-// WithGRPCDialOptions appends grpc.DialOptions used when connecting the gRPC
-// backend (e.g. custom credentials or interceptors). It has no effect on the
-// JSON-RPC backend.
+// WithGRPCDialOptions appends grpc.DialOptions used when dialing the gRPC
+// backend. No effect on JSON-RPC; mutually exclusive with WithGRPCConn.
 func WithGRPCDialOptions(opts ...grpc.DialOption) Option {
 	return func(c *config) {
 		c.grpcDialOptions = append(c.grpcDialOptions, opts...)
+	}
+}
+
+// WithGRPCConn makes the gRPC backend use a caller-provided connection; New's
+// endpoint argument is then ignored and may be empty. The caller keeps
+// ownership (the client's Close is a no-op) and should apply
+// clientv2.MaxRecvMsgSize when dialing. Mutually exclusive with
+// WithGRPCDialOptions.
+func WithGRPCConn(conn grpc.ClientConnInterface) Option {
+	return func(c *config) {
+		c.grpcConn = conn
 	}
 }

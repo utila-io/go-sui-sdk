@@ -11,17 +11,12 @@ import (
 	"github.com/utila-io/go-sui-sdk/clientv2"
 )
 
-// BackendEnvVar is a last-resort operational override for backend selection,
-// consulted only when WithBackend is not passed. Accepted values: "v1" or
-// "jsonrpc" for the JSON-RPC backend, "v2" or "grpc" for the gRPC backend.
+// BackendEnvVar overrides backend selection when WithBackend is not passed.
+// Accepted values: "v1"/"jsonrpc" or "v2"/"grpc".
 const BackendEnvVar = "SUI_SDK_BACKEND"
 
-// New returns a SuiClient talking to endpoint. The backend is chosen by
-// WithBackend when given, then by the SUI_SDK_BACKEND environment variable,
-// and defaults to BackendJSONRPC.
-//
-// No network I/O happens at construction: the JSON-RPC backend only records
-// the endpoint, and the gRPC backend connects lazily on the first call.
+// New returns a SuiClient for endpoint. Backend precedence: WithBackend, then
+// SUI_SDK_BACKEND, then BackendJSONRPC. No network I/O at construction.
 func New(endpoint string, opts ...Option) (SuiClient, error) {
 	var cfg config
 	for _, opt := range opts {
@@ -49,6 +44,12 @@ func New(endpoint string, opts ...Option) (SuiClient, error) {
 		}
 		return &jsonrpcBackend{c: c}, nil
 	case BackendGRPC:
+		if cfg.grpcConn != nil {
+			if len(cfg.grpcDialOptions) > 0 {
+				return nil, fmt.Errorf("suiclient: WithGRPCConn and WithGRPCDialOptions are mutually exclusive")
+			}
+			return clientv2.NewClientWithConn(cfg.grpcConn), nil
+		}
 		// Not returned directly: that would wrap a typed-nil *clientv2.Client
 		// in a non-nil SuiClient interface on error.
 		c, err := clientv2.NewClient(endpoint, cfg.grpcDialOptions...)
@@ -76,9 +77,8 @@ func backendFromEnv() (backend Backend, ok bool, err error) {
 	}
 }
 
-// defaultHTTPClient mirrors the http.Client that client.Dial uses, so that
-// New(endpoint) behaves like client.Dial(endpoint) unless WithHTTPClient is
-// passed.
+// defaultHTTPClient mirrors client.Dial's http.Client so that New(endpoint)
+// behaves like client.Dial(endpoint).
 func defaultHTTPClient() *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{

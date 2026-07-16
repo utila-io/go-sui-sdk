@@ -4,6 +4,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/utila-io/go-sui-sdk/clientv2"
 )
@@ -124,4 +127,42 @@ func TestNewIsLazy(t *testing.T) {
 			require.NoError(t, c.Close())
 		})
 	}
+}
+
+func TestNewWithGRPCConn(t *testing.T) {
+	t.Setenv(BackendEnvVar, "")
+	conn, err := grpc.NewClient(unreachableEndpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer conn.Close()
+
+	c, err := New("", WithBackend(BackendGRPC), WithGRPCConn(conn))
+	require.NoError(t, err)
+	require.Equal(t, BackendGRPC, backendOf(t, c))
+
+	// The connection is caller-owned: Close on the client must not shut it down.
+	require.NoError(t, c.Close())
+	require.NotEqual(t, connectivity.Shutdown, conn.GetState())
+}
+
+func TestNewWithGRPCConnRejectsDialOptions(t *testing.T) {
+	t.Setenv(BackendEnvVar, "")
+	conn, err := grpc.NewClient(unreachableEndpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer conn.Close()
+
+	_, err = New("", WithBackend(BackendGRPC), WithGRPCConn(conn),
+		WithGRPCDialOptions(grpc.WithUserAgent("x")))
+	require.ErrorContains(t, err, "mutually exclusive")
+}
+
+func TestNewWithGRPCConnIgnoredOnJSONRPC(t *testing.T) {
+	t.Setenv(BackendEnvVar, "")
+	conn, err := grpc.NewClient(unreachableEndpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer conn.Close()
+
+	c, err := New(unreachableEndpoint, WithBackend(BackendJSONRPC), WithGRPCConn(conn))
+	require.NoError(t, err)
+	require.Equal(t, BackendJSONRPC, backendOf(t, c))
+	require.NoError(t, c.Close())
 }
