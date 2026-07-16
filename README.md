@@ -46,10 +46,13 @@ server-side transaction builders, faucet, staking/APY reads, and arbitrary
 with `sui_types.ProgrammableTransactionBuilder` instead, and enumerate
 checkpoint transactions with `GetCheckpointTransactions`.
 
-The gRPC bindings are generated from protos vendored at a pinned commit of
-[MystenLabs/sui-apis](https://github.com/MystenLabs/sui-apis); see the
-`Makefile` (`make proto-update`) to update them. Note that grpc-go raises
-the module's minimum Go version to 1.25.
+The gRPC bindings are generated from the
+[MystenLabs/sui-apis](https://github.com/MystenLabs/sui-apis) protos, pinned
+via the `third_party/sui-apis` git submodule. The generated code is committed,
+so consumers installing via `go get` need nothing extra; the submodule is only
+needed to regenerate (`git submodule update --init`, then `make proto`, or
+`make proto-update` after bumping `SUI_APIS_REF` to move the pin). Note that
+grpc-go raises the module's minimum Go version to 1.25.
 
 ## Usage
 
