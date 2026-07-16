@@ -3,20 +3,14 @@ package suiclient
 import (
 	"fmt"
 	"net/http"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/utila-io/go-sui-sdk/client"
 	"github.com/utila-io/go-sui-sdk/clientv2"
 )
 
-// BackendEnvVar overrides backend selection when WithBackend is not passed.
-// Accepted values: "v1"/"jsonrpc" or "v2"/"grpc".
-const BackendEnvVar = "SUI_SDK_BACKEND"
-
-// New returns a SuiClient for endpoint. Backend precedence: WithBackend, then
-// SUI_SDK_BACKEND, then BackendJSONRPC. No network I/O at construction.
+// New returns a SuiClient for endpoint. The backend is selected with
+// WithBackend and defaults to BackendJSONRPC. No network I/O at construction.
 func New(endpoint string, opts ...Option) (SuiClient, error) {
 	var cfg config
 	for _, opt := range opts {
@@ -26,10 +20,6 @@ func New(endpoint string, opts ...Option) (SuiClient, error) {
 	backend := BackendJSONRPC
 	if cfg.backend != nil {
 		backend = *cfg.backend
-	} else if envBackend, ok, err := backendFromEnv(); err != nil {
-		return nil, err
-	} else if ok {
-		backend = envBackend
 	}
 
 	switch backend {
@@ -69,21 +59,6 @@ func New(endpoint string, opts ...Option) (SuiClient, error) {
 		return c, nil
 	default:
 		return nil, fmt.Errorf("suiclient: unknown backend %d", backend)
-	}
-}
-
-// backendFromEnv reads BackendEnvVar; ok is false when the variable is unset
-// or empty.
-func backendFromEnv() (backend Backend, ok bool, err error) {
-	switch v := strings.ToLower(strings.TrimSpace(os.Getenv(BackendEnvVar))); v {
-	case "":
-		return 0, false, nil
-	case "v1", "jsonrpc":
-		return BackendJSONRPC, true, nil
-	case "v2", "grpc":
-		return BackendGRPC, true, nil
-	default:
-		return 0, false, fmt.Errorf("suiclient: invalid %s value %q (want v1|jsonrpc|v2|grpc)", BackendEnvVar, v)
 	}
 }
 

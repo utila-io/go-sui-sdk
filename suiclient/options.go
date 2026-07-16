@@ -40,8 +40,8 @@ type config struct {
 // Option configures New.
 type Option func(*config)
 
-// WithBackend selects the backend explicitly, taking precedence over the
-// SUI_SDK_BACKEND environment variable and the default.
+// WithBackend selects the backend explicitly instead of the default
+// BackendJSONRPC.
 func WithBackend(b Backend) Option {
 	return func(c *config) {
 		c.backend = &b

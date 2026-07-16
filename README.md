@@ -34,8 +34,7 @@ defer cli.Close()
 bal, err := cli.GetBalance(ctx, owner, "") // same interface either way
 ```
 
-The backend can also be forced at runtime with `SUI_SDK_BACKEND=v1|v2`
-(an explicit `WithBackend` always wins). The `suiclient.SuiClient` interface
+The `suiclient.SuiClient` interface
 contains only methods both backends fully support: balances & coins (including
 SIP-58 address balances and `accumulatorEvents` on effects), objects,
 transaction reads/execution/simulation, and checkpoints.

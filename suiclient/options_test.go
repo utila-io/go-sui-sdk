@@ -47,64 +47,12 @@ func newAndClose(t *testing.T, opts ...Option) Backend {
 }
 
 func TestNewDefaultsToJSONRPC(t *testing.T) {
-	t.Setenv(BackendEnvVar, "")
 	require.Equal(t, BackendJSONRPC, newAndClose(t))
 }
 
 func TestNewWithBackend(t *testing.T) {
-	t.Setenv(BackendEnvVar, "")
 	require.Equal(t, BackendJSONRPC, newAndClose(t, WithBackend(BackendJSONRPC)))
 	require.Equal(t, BackendGRPC, newAndClose(t, WithBackend(BackendGRPC)))
-}
-
-func TestNewWithBackendOverridesEnv(t *testing.T) {
-	t.Setenv(BackendEnvVar, "grpc")
-	require.Equal(t, BackendJSONRPC, newAndClose(t, WithBackend(BackendJSONRPC)))
-
-	t.Setenv(BackendEnvVar, "jsonrpc")
-	require.Equal(t, BackendGRPC, newAndClose(t, WithBackend(BackendGRPC)))
-
-	// An invalid env value is not even consulted when WithBackend is given.
-	t.Setenv(BackendEnvVar, "not-a-backend")
-	require.Equal(t, BackendGRPC, newAndClose(t, WithBackend(BackendGRPC)))
-}
-
-func TestNewBackendFromEnv(t *testing.T) {
-	cases := []struct {
-		env  string
-		want Backend
-	}{
-		{"v1", BackendJSONRPC},
-		{"jsonrpc", BackendJSONRPC},
-		{"V1", BackendJSONRPC},
-		{"JSONRPC", BackendJSONRPC},
-		{"JsonRpc", BackendJSONRPC},
-		{"v2", BackendGRPC},
-		{"grpc", BackendGRPC},
-		{"V2", BackendGRPC},
-		{"GRPC", BackendGRPC},
-		{"Grpc", BackendGRPC},
-		{"  v2  ", BackendGRPC}, // surrounding whitespace is trimmed
-		{"", BackendJSONRPC},    // unset/empty falls back to the default
-	}
-	for _, tc := range cases {
-		t.Run("env="+tc.env, func(t *testing.T) {
-			t.Setenv(BackendEnvVar, tc.env)
-			require.Equal(t, tc.want, newAndClose(t))
-		})
-	}
-}
-
-func TestNewInvalidEnvBackendErrors(t *testing.T) {
-	for _, env := range []string{"v3", "http", "json", "1", "grpc2"} {
-		t.Run("env="+env, func(t *testing.T) {
-			t.Setenv(BackendEnvVar, env)
-			c, err := New(unreachableEndpoint)
-			require.Error(t, err)
-			require.Nil(t, c)
-			require.Contains(t, err.Error(), BackendEnvVar)
-		})
-	}
 }
 
 func TestNewUnknownBackendErrors(t *testing.T) {
@@ -123,7 +71,6 @@ func TestBackendString(t *testing.T) {
 // TestNewIsLazy pins down that New performs no network I/O for either backend:
 // constructing against a closed port succeeds, and Close releases cleanly.
 func TestNewIsLazy(t *testing.T) {
-	t.Setenv(BackendEnvVar, "")
 	for _, backend := range []Backend{BackendJSONRPC, BackendGRPC} {
 		t.Run(backend.String(), func(t *testing.T) {
 			c, err := New(unreachableEndpoint, WithBackend(backend))
@@ -134,7 +81,6 @@ func TestNewIsLazy(t *testing.T) {
 }
 
 func TestNewWithGRPCConn(t *testing.T) {
-	t.Setenv(BackendEnvVar, "")
 	conn, err := grpc.NewClient(unreachableEndpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	defer conn.Close()
@@ -149,7 +95,6 @@ func TestNewWithGRPCConn(t *testing.T) {
 }
 
 func TestNewWithGRPCConnRejectsDialOptions(t *testing.T) {
-	t.Setenv(BackendEnvVar, "")
 	conn, err := grpc.NewClient(unreachableEndpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	defer conn.Close()
@@ -160,7 +105,6 @@ func TestNewWithGRPCConnRejectsDialOptions(t *testing.T) {
 }
 
 func TestNewWithGRPCConnIgnoredOnJSONRPC(t *testing.T) {
-	t.Setenv(BackendEnvVar, "")
 	conn, err := grpc.NewClient(unreachableEndpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	defer conn.Close()
@@ -172,7 +116,6 @@ func TestNewWithGRPCConnIgnoredOnJSONRPC(t *testing.T) {
 }
 
 func TestNewWithAuthTokenJSONRPC(t *testing.T) {
-	t.Setenv(BackendEnvVar, "")
 	var gotToken string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotToken = r.Header.Get("x-token")
@@ -191,7 +134,6 @@ func TestNewWithAuthTokenJSONRPC(t *testing.T) {
 }
 
 func TestNewWithAuthTokenRejectsGRPCConn(t *testing.T) {
-	t.Setenv(BackendEnvVar, "")
 	conn, err := grpc.NewClient(unreachableEndpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	defer conn.Close()
