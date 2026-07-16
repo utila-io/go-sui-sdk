@@ -34,10 +34,7 @@ func (c *Client) GetCheckpoint(ctx context.Context, seqNum uint64) (*types.Check
 	return adapt.Checkpoint(checkpoint), nil
 }
 
-const (
-	checkpointFetchConcurrency = 8
-	checkpointMaxPrealloc      = 4096
-)
+const checkpointFetchConcurrency = 8
 
 // GetCheckpoints returns up to limit sequential checkpoints from startSeqNum
 // (inclusive), ascending, ending early at the tip of the chain. A limit <= 0
@@ -55,30 +52,21 @@ func (c *Client) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit i
 	// (checkpoints are contiguous); offsets below it are never skipped, keeping
 	// the collected prefix hole-free. It only ever decreases.
 	var (
-		mu           sync.Mutex
-		checkpoints  = make([]*pb.Checkpoint, 0, min(limit, checkpointMaxPrealloc))
-		firstErr     error
+		// Fixed length: each worker writes a distinct index, so no lock is
+		// needed (wg.Wait orders the final read). Pointers only, so a huge
+		// limit costs 8 bytes per entry.
+		checkpoints  = make([]*pb.Checkpoint, limit)
+		firstErr     atomic.Pointer[error]
 		firstMissing atomic.Int64
 		indices      = make(chan int)
 		wg           sync.WaitGroup
 	)
 	firstMissing.Store(int64(limit))
 
-	store := func(i int, checkpoint *pb.Checkpoint) {
-		mu.Lock()
-		defer mu.Unlock()
-		for len(checkpoints) <= i {
-			checkpoints = append(checkpoints, nil)
-		}
-		checkpoints[i] = checkpoint
-	}
 	// The first hard error wins and cancels all remaining work; errors from
 	// RPCs aborted by that cancellation are dropped.
 	fail := func(err error) {
-		mu.Lock()
-		defer mu.Unlock()
-		if firstErr == nil {
-			firstErr = err
+		if firstErr.CompareAndSwap(nil, &err) {
 			cancel()
 		}
 	}
@@ -105,7 +93,7 @@ func (c *Client) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit i
 				checkpoint, err := c.getCheckpoint(ctx, startSeqNum+uint64(i), adapt.CheckpointReadMaskPaths)
 				switch {
 				case err == nil:
-					store(i, checkpoint)
+					checkpoints[i] = checkpoint
 				case status.Code(err) == codes.NotFound:
 					for current := firstMissing.Load(); int64(i) < current; current = firstMissing.Load() {
 						if firstMissing.CompareAndSwap(current, int64(i)) {
@@ -120,8 +108,8 @@ func (c *Client) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit i
 	}
 	wg.Wait()
 
-	if firstErr != nil {
-		return nil, fmt.Errorf("GetCheckpoints: %w", firstErr)
+	if err := firstErr.Load(); err != nil {
+		return nil, fmt.Errorf("GetCheckpoints: %w", *err)
 	}
 	missing := int(firstMissing.Load())
 	if missing < limit {
