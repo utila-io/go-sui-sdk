@@ -67,6 +67,9 @@ func (c *Client) DryRunTransaction(ctx context.Context, txBytes lib.Base64Data) 
 		return nil, fmt.Errorf("DryRunTransaction: %w", err)
 	}
 	response := adapt.Response(resp.GetTransaction(), simulateOptions)
+	if response == nil {
+		return nil, fmt.Errorf("DryRunTransaction: node returned no transaction")
+	}
 	out := &types.DryRunTransactionBlockResponse{
 		Events:         response.Events,
 		BalanceChanges: response.BalanceChanges,
@@ -104,6 +107,9 @@ func (c *Client) DevInspectTransactionBlock(
 		return nil, fmt.Errorf("DevInspectTransactionBlock: %w", err)
 	}
 	response := adapt.Response(resp.GetTransaction(), simulateOptions)
+	if response == nil {
+		return nil, fmt.Errorf("DevInspectTransactionBlock: node returned no transaction")
+	}
 	out := &types.DevInspectResults{
 		Events:  response.Events,
 		Results: adapt.ExecutionResults(resp.GetCommandOutputs()),
