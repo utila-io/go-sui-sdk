@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/url"
 	"strings"
 
 	"google.golang.org/grpc"
@@ -53,15 +52,9 @@ func WithInsecure() grpc.DialOption {
 // WithInsecure (or another transport credential) is passed in dialOpts, which
 // are appended last and override the defaults. The connection is lazy.
 func NewClient(endpoint string, dialOpts ...grpc.DialOption) (*Client, error) {
-	target, creds, err := parseEndpoint(endpoint)
+	target, err := parseEndpoint(endpoint)
 	if err != nil {
 		return nil, err
-	}
-	if creds != nil {
-		// Future URL-credential support (Basic vs x-token mapping, pending the
-		// provider's auth scheme) plugs in here; until then failing loudly
-		// beats dialing with the credentials silently dropped.
-		return nil, fmt.Errorf("gRPC endpoint %s: URL credentials are not yet supported; pass credentials via WithHeaders or gRPC dial options", target)
 	}
 	opts := append([]grpc.DialOption{
 		grpc.WithTransportCredentials(credentials.NewClientTLSFromCert(nil, "")),
@@ -86,34 +79,25 @@ func (c *Client) Close() error {
 	return c.ownedConn.Close()
 }
 
-// parseEndpoint accepts "grpc://host[:port]" and "host[:port]", both
-// optionally with "user:pass@" userinfo, which is returned separately and
-// stripped from the dial target. A missing port defaults to 443. http and
-// https are rejected: transport security is not a property of the endpoint
-// string (TLS is always the default; plaintext is WithInsecure).
-func parseEndpoint(endpoint string) (target string, creds *url.Userinfo, err error) {
+// parseEndpoint accepts "grpc://host[:port]" and "host[:port]"; a missing
+// port defaults to 443. http and https are rejected: transport security is
+// not a property of the endpoint string (TLS is always the default;
+// plaintext is WithInsecure).
+func parseEndpoint(endpoint string) (target string, err error) {
 	rest := endpoint
 	if i := strings.Index(rest, "://"); i >= 0 {
 		scheme := strings.ToLower(rest[:i])
 		if scheme != "grpc" {
-			return "", nil, fmt.Errorf("unsupported gRPC endpoint scheme %q; use grpc://host:port or host:port", scheme)
+			return "", fmt.Errorf("unsupported gRPC endpoint scheme %q; use grpc://host:port or host:port", scheme)
 		}
 		rest = rest[i+3:]
 	}
 	rest = strings.TrimSuffix(rest, "/")
-	if i := strings.LastIndex(rest, "@"); i >= 0 {
-		if user, pass, ok := strings.Cut(rest[:i], ":"); ok {
-			creds = url.UserPassword(user, pass)
-		} else {
-			creds = url.User(user)
-		}
-		rest = rest[i+1:]
-	}
 	if rest == "" {
-		return "", nil, errors.New("empty gRPC endpoint")
+		return "", errors.New("empty gRPC endpoint")
 	}
 	if _, _, splitErr := net.SplitHostPort(rest); splitErr != nil {
 		rest += ":443"
 	}
-	return rest, creds, nil
+	return rest, nil
 }
