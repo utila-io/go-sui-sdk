@@ -26,7 +26,6 @@ func (c *Client) GetLatestCheckpointSequenceNumber(ctx context.Context) (string,
 	return strconv.FormatUint(resp.GetCheckpointHeight(), 10), nil
 }
 
-// GetCheckpoint returns the checkpoint with the given sequence number.
 func (c *Client) GetCheckpoint(ctx context.Context, seqNum uint64) (*types.Checkpoint, error) {
 	checkpoint, err := c.getCheckpoint(ctx, seqNum, adapt.CheckpointReadMaskPaths)
 	if err != nil {
@@ -35,8 +34,6 @@ func (c *Client) GetCheckpoint(ctx context.Context, seqNum uint64) (*types.Check
 	return adapt.Checkpoint(checkpoint), nil
 }
 
-// checkpointFetchConcurrency caps the number of parallel GetCheckpoint calls
-// issued by GetCheckpoints.
 const checkpointFetchConcurrency = 8
 
 // GetCheckpoints returns up to limit sequential checkpoints from startSeqNum
@@ -46,9 +43,9 @@ func (c *Client) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit i
 	if limit <= 0 {
 		return nil, nil
 	}
-	// Fetch with bounded concurrency. firstMissing tracks the lowest NotFound
-	// offset so later offsets can skip (checkpoints are contiguous); offsets
-	// below it are never skipped, keeping the collected prefix hole-free.
+	// firstMissing tracks the lowest NotFound offset so later offsets can skip
+	// (checkpoints are contiguous); offsets below it are never skipped, keeping
+	// the collected prefix hole-free.
 	var (
 		checkpoints  = make([]*pb.Checkpoint, limit)
 		errs         = make([]error, limit)
@@ -68,7 +65,6 @@ func (c *Client) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit i
 			}
 			checkpoint, err := c.getCheckpoint(ctx, startSeqNum+uint64(i), adapt.CheckpointReadMaskPaths)
 			if status.Code(err) == codes.NotFound {
-				// Lower firstMissing to i (it only ever decreases).
 				for current := firstMissing.Load(); int64(i) < current; current = firstMissing.Load() {
 					if firstMissing.CompareAndSwap(current, int64(i)) {
 						break
@@ -113,7 +109,6 @@ func (c *Client) GetCheckpointTransactions(
 	return responses, nil
 }
 
-// getCheckpoint fetches one checkpoint with the given read mask.
 func (c *Client) getCheckpoint(ctx context.Context, seqNum uint64, readMaskPaths []string) (*pb.Checkpoint, error) {
 	resp, err := c.ledger.GetCheckpoint(ctx, &pb.GetCheckpointRequest{
 		CheckpointId: &pb.GetCheckpointRequest_SequenceNumber{SequenceNumber: seqNum},

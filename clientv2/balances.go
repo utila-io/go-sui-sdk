@@ -33,8 +33,6 @@ func (c *Client) GetBalance(ctx context.Context, owner sui_types.SuiAddress, coi
 	return &balance, nil
 }
 
-// GetAllBalances returns the balances of every coin type owned by owner,
-// walking all ListBalances pages.
 func (c *Client) GetAllBalances(ctx context.Context, owner sui_types.SuiAddress) ([]types.Balance, error) {
 	var balances []types.Balance
 	var pageToken []byte

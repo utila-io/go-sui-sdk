@@ -85,7 +85,6 @@ type SuiTransactionBlockEffectsV1 struct {
 	AccumulatorEvents []AccumulatorEvent `json:"accumulatorEvents,omitempty"`
 }
 
-// AccumulatorOperation is the direction of an accumulator event.
 type AccumulatorOperation string
 
 const (
@@ -95,7 +94,6 @@ const (
 	AccumulatorOperationSplit AccumulatorOperation = "split"
 )
 
-// AccumulatorEventValue holds the numeric value of an accumulator event.
 type AccumulatorEventValue struct {
 	Integer *uint64 `json:"integer,omitempty"`
 }

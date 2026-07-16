@@ -58,8 +58,6 @@ type SuiClient interface {
 	// GetCheckpoints returns up to limit sequential checkpoints starting at
 	// startSeqNum (inclusive), in ascending order.
 	GetCheckpoints(ctx context.Context, startSeqNum uint64, limit int) ([]*types.Checkpoint, error)
-	// GetCheckpointTransactions returns every transaction in the checkpoint,
-	// shaped per options.
 	GetCheckpointTransactions(ctx context.Context, seqNum uint64, options types.SuiTransactionBlockResponseOptions) ([]*types.SuiTransactionBlockResponse, error)
 
 	// Closer releases backend resources (no-op for JSON-RPC; closes the

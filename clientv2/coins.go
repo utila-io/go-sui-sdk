@@ -68,7 +68,6 @@ func (c *Client) GetCoins(
 	return page, nil
 }
 
-// GetCoinMetadata returns the CoinMetadata for the given coin type.
 func (c *Client) GetCoinMetadata(ctx context.Context, coinType string) (*types.SuiCoinMetadata, error) {
 	resp, err := c.state.GetCoinInfo(ctx, &pb.GetCoinInfoRequest{CoinType: proto.String(coinType)})
 	if err != nil {
@@ -81,7 +80,6 @@ func (c *Client) GetCoinMetadata(ctx context.Context, coinType string) (*types.S
 	return metadata, nil
 }
 
-// GetReferenceGasPrice returns the current epoch's reference gas price.
 func (c *Client) GetReferenceGasPrice(ctx context.Context) (*types.SafeSuiBigInt[uint64], error) {
 	resp, err := c.ledger.GetEpoch(ctx, &pb.GetEpochRequest{
 		ReadMask: &fieldmaskpb.FieldMask{Paths: []string{"reference_gas_price"}},

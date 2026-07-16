@@ -20,8 +20,6 @@ import (
 // performs no network I/O.
 const unreachableEndpoint = "127.0.0.1:1"
 
-// backendOf reports which backend a SuiClient was constructed with, based on
-// the concrete type New returns.
 func backendOf(t *testing.T, c SuiClient) Backend {
 	t.Helper()
 	switch c.(type) {

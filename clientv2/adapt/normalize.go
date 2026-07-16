@@ -29,7 +29,6 @@ func NormalizeTypeString(typeStr string) string {
 	})
 }
 
-// parseAddress converts a proto address/object-ID string into a SuiAddress.
 func parseAddress(str string) (sui_types.SuiAddress, error) {
 	addr, err := sui_types.NewAddressFromHex(str)
 	if err != nil {
@@ -38,10 +37,9 @@ func parseAddress(str string) (sui_types.SuiAddress, error) {
 	return *addr, nil
 }
 
-// parseDigest converts a proto base58 digest string into a sui_types.Digest.
 // Invalid base58 decodes to an empty digest rather than an error: the node
 // only emits canonical base58, so it is not worth threading an error through.
 func parseDigest(str string) sui_types.Digest {
-	digest, _ := lib.NewBase58(str) // invalid chars decode to empty
+	digest, _ := lib.NewBase58(str)
 	return *digest
 }

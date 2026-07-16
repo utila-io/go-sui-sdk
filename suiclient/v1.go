@@ -10,8 +10,8 @@ import (
 	"github.com/utila-io/go-sui-sdk/types"
 )
 
-// jsonrpcBackend adapts *client.Client to SuiClient. Methods whose v1
-// signatures diverge from the interface go through CallContext directly.
+// Methods whose v1 signatures diverge from the SuiClient interface go
+// through CallContext directly.
 type jsonrpcBackend struct {
 	c *client.Client
 }

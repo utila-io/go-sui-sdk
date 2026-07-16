@@ -13,11 +13,8 @@ import (
 	"github.com/utila-io/go-sui-sdk/types"
 )
 
-// batchTransactionsChunkSize caps the number of digests per
-// BatchGetTransactions request.
 const batchTransactionsChunkSize = 50
 
-// GetTransactionBlock returns the executed transaction, shaped per options.
 func (c *Client) GetTransactionBlock(
 	ctx context.Context,
 	digest sui_types.TransactionDigest,
@@ -51,8 +48,6 @@ func (c *Client) MultiGetTransactionBlocks(
 	return responses, nil
 }
 
-// batchGetTransactions fetches transactions via BatchGetTransactions in
-// chunks, preserving digest order. The first per-item error fails the call.
 func (c *Client) batchGetTransactions(
 	ctx context.Context,
 	digests []string,

@@ -6,7 +6,6 @@ import (
 	"google.golang.org/grpc"
 )
 
-// Backend identifies the transport serving the SuiClient interface.
 type Backend int
 
 const (
@@ -16,7 +15,6 @@ const (
 	BackendGRPC
 )
 
-// String returns the canonical name of the backend.
 func (b Backend) String() string {
 	switch b {
 	case BackendJSONRPC:
@@ -28,7 +26,6 @@ func (b Backend) String() string {
 	}
 }
 
-// config collects the settings applied by Options before New picks a backend.
 type config struct {
 	backend         *Backend
 	httpClient      *http.Client
@@ -38,7 +35,6 @@ type config struct {
 	insecure        bool
 }
 
-// Option configures New.
 type Option func(*config)
 
 // WithBackend selects the backend explicitly instead of the default

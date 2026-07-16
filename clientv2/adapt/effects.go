@@ -93,8 +93,6 @@ func mapChangedObject(v1 *types.SuiTransactionBlockEffectsV1, changed *pb.Change
 	return nil
 }
 
-// accumulatorEvent converts an ACCUMULATOR_WRITE changed_objects entry into
-// the accumulatorEvents shape emitted by JSON-RPC effects.
 func accumulatorEvent(changed *pb.ChangedObject) types.AccumulatorEvent {
 	write := changed.GetAccumulatorWrite()
 	event := types.AccumulatorEvent{

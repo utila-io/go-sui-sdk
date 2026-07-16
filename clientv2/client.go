@@ -21,7 +21,6 @@ import (
 // connection via NewClientWithConn must apply it themselves when dialing.
 const MaxRecvMsgSize = 64 * 1024 * 1024
 
-// Client is a Sui client backed by the sui.rpc.v2 gRPC API.
 type Client struct {
 	// ownedConn is the connection dialed by NewClient; nil when the
 	// connection was injected via NewClientWithConn (caller-owned).

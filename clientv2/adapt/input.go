@@ -37,7 +37,7 @@ func RawSenderSignedData(txData []byte, signatures []*pb.UserSignature) []byte {
 	return out
 }
 
-// appendULEB128 appends the ULEB128 encoding of v, the BCS length prefix.
+// ULEB128 is BCS's length-prefix encoding.
 func appendULEB128(buf []byte, v uint64) []byte {
 	for v >= 0x80 {
 		buf = append(buf, byte(v)|0x80)

@@ -19,8 +19,7 @@ func Balance(balance *pb.Balance) types.Balance {
 	}
 }
 
-// decimalFromUint64 converts a uint64 into the decimal type backing
-// types.SuiBigInt without overflowing at values above MaxInt64.
+// Via big.Int so values above MaxInt64 do not overflow.
 func decimalFromUint64(num uint64) decimal.Decimal {
 	return decimal.NewFromBigInt(new(big.Int).SetUint64(num), 0)
 }
