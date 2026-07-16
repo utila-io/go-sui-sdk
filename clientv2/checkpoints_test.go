@@ -2,6 +2,7 @@ package clientv2
 
 import (
 	"context"
+	"fmt"
 	"runtime"
 	"sync/atomic"
 	"testing"
@@ -169,9 +170,11 @@ func TestGetCheckpointsHardErrorAbortsRemainingFetches(t *testing.T) {
 func TestGetCheckpointsNonPositiveLimit(t *testing.T) {
 	client, _ := newMockClient(t)
 	for _, limit := range []int{0, -1} {
-		checkpoints, err := client.GetCheckpoints(context.Background(), 100, limit)
-		require.NoError(t, err)
-		require.Nil(t, checkpoints)
+		t.Run(fmt.Sprintf("limit %d", limit), func(t *testing.T) {
+			checkpoints, err := client.GetCheckpoints(context.Background(), 100, limit)
+			require.NoError(t, err)
+			require.Nil(t, checkpoints)
+		})
 	}
 }
 

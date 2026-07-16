@@ -10,48 +10,58 @@ func TestParseEndpoint(t *testing.T) {
 	cases := []struct {
 		endpoint string
 		target   string
+		wantErr  bool
 	}{
-		{"grpc://fullnode.mainnet.sui.io:443", "fullnode.mainnet.sui.io:443"},
-		{"grpc://fullnode.mainnet.sui.io", "fullnode.mainnet.sui.io:443"},
-		{"grpc://node.example:9000/", "node.example:9000"},
-		{"fullnode.mainnet.sui.io", "fullnode.mainnet.sui.io:443"},
-		{"fullnode.mainnet.sui.io:443", "fullnode.mainnet.sui.io:443"},
-		{"my-node.provider.example:9000", "my-node.provider.example:9000"},
+		{endpoint: "grpc://fullnode.mainnet.sui.io:443", target: "fullnode.mainnet.sui.io:443"},
+		{endpoint: "grpc://fullnode.mainnet.sui.io", target: "fullnode.mainnet.sui.io:443"},
+		{endpoint: "grpc://node.example:9000/", target: "node.example:9000"},
+		{endpoint: "fullnode.mainnet.sui.io", target: "fullnode.mainnet.sui.io:443"},
+		{endpoint: "fullnode.mainnet.sui.io:443", target: "fullnode.mainnet.sui.io:443"},
+		{endpoint: "my-node.provider.example:9000", target: "my-node.provider.example:9000"},
 		// loopback is not special: TLS default applies there too
-		{"127.0.0.1:9000", "127.0.0.1:9000"},
-		{"localhost:9000", "localhost:9000"},
-		{"localhost", "localhost:443"},
+		{endpoint: "127.0.0.1:9000", target: "127.0.0.1:9000"},
+		{endpoint: "localhost:9000", target: "localhost:9000"},
+		{endpoint: "localhost", target: "localhost:443"},
+		{endpoint: "", wantErr: true},
+		{endpoint: "grpc://", wantErr: true},
+		{endpoint: "https://fullnode.mainnet.sui.io:443", wantErr: true},
+		{endpoint: "https://fullnode.mainnet.sui.io", wantErr: true},
+		{endpoint: "http://localhost:9000", wantErr: true},
+		{endpoint: "ftp://x", wantErr: true},
+		// URL paths and parameters make garbage dial targets
+		{endpoint: "fullnode.mainnet.sui.io:443/rpc", wantErr: true},
+		{endpoint: "fullnode.mainnet.sui.io/rpc", wantErr: true},
+		{endpoint: "grpc://node.example:9000/rpc", wantErr: true},
+		{endpoint: "grpc://node.example:9000/rpc/", wantErr: true},
+		{endpoint: "node.example:9000?tls=off", wantErr: true},
+		{endpoint: "node.example:9000#frag", wantErr: true},
 	}
 	for _, c := range cases {
-		target, err := parseEndpoint(c.endpoint)
-		require.NoError(t, err, c.endpoint)
-		require.Equal(t, c.target, target, c.endpoint)
+		t.Run(c.endpoint, func(t *testing.T) {
+			target, err := parseEndpoint(c.endpoint)
+			if c.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, c.target, target)
+		})
 	}
 }
 
-func TestParseEndpointRejected(t *testing.T) {
-	for _, endpoint := range []string{
-		"",
-		"grpc://",
-		"https://fullnode.mainnet.sui.io:443",
-		"https://fullnode.mainnet.sui.io",
-		"http://localhost:9000",
-		"ftp://x",
-		// URL paths and parameters make garbage dial targets
-		"fullnode.mainnet.sui.io:443/rpc",
-		"fullnode.mainnet.sui.io/rpc",
-		"grpc://node.example:9000/rpc",
-		"grpc://node.example:9000/rpc/",
-		"node.example:9000?tls=off",
-		"node.example:9000#frag",
-	} {
-		_, err := parseEndpoint(endpoint)
-		require.Error(t, err, endpoint)
+// NewClient surfaces parse failures with actionable messages.
+func TestNewClientRejectsBadEndpoint(t *testing.T) {
+	cases := []struct {
+		endpoint        string
+		wantErrContains string
+	}{
+		{"https://fullnode.mainnet.sui.io:443", "grpc://host:port or host:port"},
+		{"grpc://node.example:9000/rpc", "must be host:port"},
 	}
-
-	_, err := NewClient("https://fullnode.mainnet.sui.io:443")
-	require.ErrorContains(t, err, "grpc://host:port or host:port")
-
-	_, err = NewClient("grpc://node.example:9000/rpc")
-	require.ErrorContains(t, err, "must be host:port")
+	for _, c := range cases {
+		t.Run(c.endpoint, func(t *testing.T) {
+			_, err := NewClient(c.endpoint)
+			require.ErrorContains(t, err, c.wantErrContains)
+		})
+	}
 }

@@ -2,6 +2,7 @@ package clientv2
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"testing"
 
@@ -53,31 +54,40 @@ func TestWithHeadersSendsHeaders(t *testing.T) {
 
 func TestWithHeadersPanicsOnInvalidKey(t *testing.T) {
 	for _, key := range []string{"", ":authority", "grpc-timeout", "Grpc-Timeout", "x api key"} {
-		require.Panics(t, func() { WithHeaders(map[string]string{key: "v"}) }, "key %q", key)
+		t.Run(fmt.Sprintf("%q", key), func(t *testing.T) {
+			require.Panics(t, func() { WithHeaders(map[string]string{key: "v"}) })
+		})
 	}
 }
 
 func TestValidateHeaderKey(t *testing.T) {
-	for _, key := range []string{
-		"x-api-key",
-		"Authorization", // uppercase normalizes to lowercase, still valid
-		"x_key.v1",
-		"key0-9",
-	} {
-		require.NoError(t, ValidateHeaderKey(key), "key %q", key)
+	cases := []struct {
+		key   string
+		valid bool
+	}{
+		{key: "x-api-key", valid: true},
+		{key: "Authorization", valid: true}, // uppercase normalizes to lowercase, still valid
+		{key: "x_key.v1", valid: true},
+		{key: "key0-9", valid: true},
+		{key: ""},
+		{key: ":path"},
+		{key: "grpc-encoding"},
+		{key: "GRPC-Encoding"},
+		{key: "x api key"},  // space
+		{key: "x-api-key "}, // trailing space
+		{key: "clé"},        // non-ASCII
+		{key: "日本語"},
+		{key: "x@key"},
+		{key: "key;v"},
 	}
-	for _, key := range []string{
-		"",
-		":path",
-		"grpc-encoding",
-		"GRPC-Encoding",
-		"x api key",  // space
-		"x-api-key ", // trailing space
-		"clé",        // non-ASCII
-		"日本語",
-		"x@key",
-		"key;v",
-	} {
-		require.Error(t, ValidateHeaderKey(key), "key %q", key)
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("%q", c.key), func(t *testing.T) {
+			err := ValidateHeaderKey(c.key)
+			if c.valid {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
 	}
 }

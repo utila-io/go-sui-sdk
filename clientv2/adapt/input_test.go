@@ -302,19 +302,32 @@ func TestTransactionBlock(t *testing.T) {
 
 func TestTypeTagString(t *testing.T) {
 	u64Tag := move_types.TypeTag{U64: &lib.EmptyEnum{}}
-	require.Equal(t, "u64", typeTagString(u64Tag))
-	require.Equal(t, "vector<u64>", typeTagString(move_types.TypeTag{Vector: &u64Tag}))
-	require.Equal(t, "address", typeTagString(move_types.TypeTag{Address: &lib.EmptyEnum{}}))
-
-	nested := move_types.TypeTag{Struct: &move_types.StructTag{
-		Address: mustAddress(t, longSuiPackage),
-		Module:  "coin",
-		Name:    "Coin",
-		TypeParams: []move_types.TypeTag{{Struct: &move_types.StructTag{
-			Address: mustAddress(t, longSuiPackage),
-			Module:  "sui",
-			Name:    "SUI",
-		}}},
-	}}
-	require.Equal(t, "0x2::coin::Coin<0x2::sui::SUI>", typeTagString(nested))
+	cases := []struct {
+		name string
+		in   move_types.TypeTag
+		want string
+	}{
+		{name: "u64", in: u64Tag, want: "u64"},
+		{name: "vector of u64", in: move_types.TypeTag{Vector: &u64Tag}, want: "vector<u64>"},
+		{name: "address", in: move_types.TypeTag{Address: &lib.EmptyEnum{}}, want: "address"},
+		{
+			name: "nested struct shortens addresses",
+			in: move_types.TypeTag{Struct: &move_types.StructTag{
+				Address: mustAddress(t, longSuiPackage),
+				Module:  "coin",
+				Name:    "Coin",
+				TypeParams: []move_types.TypeTag{{Struct: &move_types.StructTag{
+					Address: mustAddress(t, longSuiPackage),
+					Module:  "sui",
+					Name:    "SUI",
+				}}},
+			}},
+			want: "0x2::coin::Coin<0x2::sui::SUI>",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			require.Equal(t, c.want, typeTagString(c.in))
+		})
+	}
 }

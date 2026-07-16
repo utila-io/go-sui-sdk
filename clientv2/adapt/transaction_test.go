@@ -268,12 +268,40 @@ func TestExecutionResults(t *testing.T) {
 }
 
 func TestCommandArgument(t *testing.T) {
-	require.Equal(t, "GasCoin", commandArgument(&pb.Argument{Kind: pb.Argument_GAS.Enum()}))
-	require.Equal(t, map[string]any{"Input": uint32(2)},
-		commandArgument(&pb.Argument{Kind: pb.Argument_INPUT.Enum(), Input: proto.Uint32(2)}))
-	require.Equal(t, map[string]any{"Result": uint32(3)},
-		commandArgument(&pb.Argument{Kind: pb.Argument_RESULT.Enum(), Result: proto.Uint32(3)}))
-	require.Equal(t, map[string]any{"NestedResult": []any{uint32(3), uint32(1)}},
-		commandArgument(&pb.Argument{Kind: pb.Argument_RESULT.Enum(), Result: proto.Uint32(3), Subresult: proto.Uint32(1)}))
-	require.Nil(t, commandArgument(nil))
+	cases := []struct {
+		name string
+		in   *pb.Argument
+		want any
+	}{
+		{
+			name: "gas coin",
+			in:   &pb.Argument{Kind: pb.Argument_GAS.Enum()},
+			want: "GasCoin",
+		},
+		{
+			name: "input",
+			in:   &pb.Argument{Kind: pb.Argument_INPUT.Enum(), Input: proto.Uint32(2)},
+			want: map[string]any{"Input": uint32(2)},
+		},
+		{
+			name: "result",
+			in:   &pb.Argument{Kind: pb.Argument_RESULT.Enum(), Result: proto.Uint32(3)},
+			want: map[string]any{"Result": uint32(3)},
+		},
+		{
+			name: "nested result",
+			in:   &pb.Argument{Kind: pb.Argument_RESULT.Enum(), Result: proto.Uint32(3), Subresult: proto.Uint32(1)},
+			want: map[string]any{"NestedResult": []any{uint32(3), uint32(1)}},
+		},
+		{
+			name: "nil argument",
+			in:   nil,
+			want: nil,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			require.Equal(t, c.want, commandArgument(c.in))
+		})
+	}
 }
