@@ -1,6 +1,6 @@
 module github.com/utila-io/go-sui-sdk
 
-go 1.25.0
+go 1.26
 
 require (
 	github.com/btcsuite/btcutil v1.0.2
