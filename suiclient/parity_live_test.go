@@ -38,8 +38,10 @@ package suiclient
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -704,6 +706,231 @@ func TestParityGetReferenceGasPrice(t *testing.T) {
 			return fmt.Errorf("reference gas price is zero")
 		}
 		return nil
+	})
+}
+
+// MARK - Objects
+
+// objectParityOptions asks for every object field both backends serve for
+// regular Move objects. ShowBcs and ShowDisplay are left out: package
+// disassembly and display are v1-only shapes (see clientv2/adapt/object.go).
+var objectParityOptions = &types.SuiObjectDataOptions{
+	ShowType:                true,
+	ShowOwner:               true,
+	ShowPreviousTransaction: true,
+	ShowContent:             true,
+	ShowStorageRebate:       true,
+}
+
+// fixtureCoinObjectID resolves a coin object owned by the fixture coin
+// address. Re-resolved per attempt: the live account can spend between reads.
+func (env *parityEnv) fixtureCoinObjectID(ctx context.Context) (sui_types.ObjectID, error) {
+	coins, err := env.v1.GetCoins(ctx, env.coinAddr, nil, nil, 1)
+	if err != nil {
+		return sui_types.ObjectID{}, err
+	}
+	if len(coins.Data) == 0 {
+		return sui_types.ObjectID{}, fmt.Errorf("fixture address %s has no coins", env.coinAddr)
+	}
+	return coins.Data[0].CoinObjectId, nil
+}
+
+// ownerKey renders an object owner into a canonical comparable string.
+func ownerKey(owner *types.ObjectOwner) string {
+	if owner == nil {
+		return "<nil>"
+	}
+	switch {
+	case owner.ObjectOwnerInternal != nil && owner.AddressOwner != nil:
+		return "addr:" + owner.AddressOwner.String()
+	case owner.ObjectOwnerInternal != nil && owner.ObjectOwner != nil:
+		return "obj:" + owner.ObjectOwner.String()
+	case owner.ObjectOwnerInternal != nil && owner.Shared != nil:
+		return "shared"
+	default:
+		return fmt.Sprintf("%v", *owner)
+	}
+}
+
+// normalizeMoveFieldValue canonicalizes the two backends' Move field
+// renderings so they can be compared: v1 (JSON-RPC) wraps a UID as
+// {"id": "0x…"} where v2's server-side json rendering may inline it, and
+// integers can arrive as JSON numbers on one side and decimal strings on the
+// other.
+func normalizeMoveFieldValue(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		if len(v) == 1 {
+			if inner, ok := v["id"]; ok {
+				return normalizeMoveFieldValue(inner)
+			}
+		}
+		out := make(map[string]any, len(v))
+		for key, elem := range v {
+			out[key] = normalizeMoveFieldValue(elem)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, elem := range v {
+			out[i] = normalizeMoveFieldValue(elem)
+		}
+		return out
+	case float64:
+		if v == math.Trunc(v) {
+			return strconv.FormatFloat(v, 'f', -1, 64)
+		}
+		return v
+	default:
+		return value
+	}
+}
+
+func compareObjectResponse(want, got *types.SuiObjectResponse) error {
+	if want.Error != nil || got.Error != nil {
+		return fmt.Errorf("unexpected error entries: v1 %+v, v2 %+v", want.Error, got.Error)
+	}
+	if want.Data == nil || got.Data == nil {
+		return fmt.Errorf("data presence: v1 %+v, v2 %+v", want.Data, got.Data)
+	}
+	wantData, gotData := want.Data, got.Data
+	if wantData.ObjectId != gotData.ObjectId {
+		return fmt.Errorf("objectId: v1 %s, v2 %s", wantData.ObjectId, gotData.ObjectId)
+	}
+	if wantData.Version.Uint64() != gotData.Version.Uint64() {
+		return fmt.Errorf("%s: version: v1 %d, v2 %d", wantData.ObjectId, wantData.Version.Uint64(), gotData.Version.Uint64())
+	}
+	if wantData.Digest.String() != gotData.Digest.String() {
+		return fmt.Errorf("%s: digest: v1 %s, v2 %s", wantData.ObjectId, wantData.Digest, gotData.Digest)
+	}
+	if wantData.Type == nil || gotData.Type == nil || *wantData.Type != *gotData.Type {
+		return fmt.Errorf("%s: type: v1 %v, v2 %v", wantData.ObjectId, wantData.Type, gotData.Type)
+	}
+	if ownerKey(wantData.Owner) != ownerKey(gotData.Owner) {
+		return fmt.Errorf("%s: owner: v1 %s, v2 %s", wantData.ObjectId, ownerKey(wantData.Owner), ownerKey(gotData.Owner))
+	}
+	if wantData.PreviousTransaction == nil || gotData.PreviousTransaction == nil {
+		return fmt.Errorf("%s: previousTransaction presence: v1 %v, v2 %v",
+			wantData.ObjectId, wantData.PreviousTransaction, gotData.PreviousTransaction)
+	}
+	if wantData.PreviousTransaction.String() != gotData.PreviousTransaction.String() {
+		return fmt.Errorf("%s: previousTransaction: v1 %s, v2 %s",
+			wantData.ObjectId, wantData.PreviousTransaction, gotData.PreviousTransaction)
+	}
+	if wantData.StorageRebate == nil || gotData.StorageRebate == nil {
+		return fmt.Errorf("%s: storageRebate presence: v1 %v, v2 %v",
+			wantData.ObjectId, wantData.StorageRebate, gotData.StorageRebate)
+	}
+	if wantData.StorageRebate.Uint64() != gotData.StorageRebate.Uint64() {
+		return fmt.Errorf("%s: storageRebate: v1 %d, v2 %d",
+			wantData.ObjectId, wantData.StorageRebate.Uint64(), gotData.StorageRebate.Uint64())
+	}
+	return compareObjectContent(wantData, gotData)
+}
+
+func compareObjectContent(want, got *types.SuiObjectData) error {
+	if want.Content == nil || got.Content == nil {
+		return fmt.Errorf("%s: content presence: v1 %v, v2 %v", want.ObjectId, want.Content != nil, got.Content != nil)
+	}
+	wantMove, gotMove := want.Content.Data.MoveObject, got.Content.Data.MoveObject
+	if (wantMove == nil) != (gotMove == nil) {
+		return fmt.Errorf("%s: content dataType: v1 moveObject=%v, v2 moveObject=%v",
+			want.ObjectId, wantMove != nil, gotMove != nil)
+	}
+	if wantMove == nil {
+		// Both packages: module disassembly is a v1-only shape (documented
+		// gap), nothing more to compare.
+		return nil
+	}
+	if wantMove.Type != gotMove.Type {
+		return fmt.Errorf("%s: content type: v1 %s, v2 %s", want.ObjectId, wantMove.Type, gotMove.Type)
+	}
+	if wantMove.HasPublicTransfer != gotMove.HasPublicTransfer {
+		return fmt.Errorf("%s: hasPublicTransfer: v1 %v, v2 %v",
+			want.ObjectId, wantMove.HasPublicTransfer, gotMove.HasPublicTransfer)
+	}
+	wantFields := fmt.Sprint(normalizeMoveFieldValue(wantMove.Fields))
+	gotFields := fmt.Sprint(normalizeMoveFieldValue(gotMove.Fields))
+	if wantFields != gotFields {
+		return fmt.Errorf("%s: content fields: v1 %s, v2 %s", want.ObjectId, wantFields, gotFields)
+	}
+	return nil
+}
+
+func TestParityGetObject(t *testing.T) {
+	env, ctx := parity(t), liveCtx(t)
+	// The fixture coin is live (its owner can spend it between the paired
+	// reads, bumping version/digest), so mismatches are retried with a freshly
+	// resolved coin.
+	retryVolatile(t, func() error {
+		objID, err := env.fixtureCoinObjectID(ctx)
+		if err != nil {
+			return err
+		}
+		fromV1, err := env.v1.GetObject(ctx, objID, objectParityOptions)
+		if err != nil {
+			return err
+		}
+		fromV2, err := env.v2.GetObject(ctx, objID, objectParityOptions)
+		if err != nil {
+			return err
+		}
+		return compareObjectResponse(fromV1, fromV2)
+	})
+}
+
+// requireNotExistsEntry asserts the response is the notExists error entry
+// shape both backends use for a missing object in a multi-get.
+func requireNotExistsEntry(backend string, resp *types.SuiObjectResponse, id sui_types.ObjectID) error {
+	if resp.Data != nil {
+		return fmt.Errorf("%s: missing object %s has data: %+v", backend, id, resp.Data)
+	}
+	if resp.Error == nil {
+		return fmt.Errorf("%s: missing object %s has neither data nor error", backend, id)
+	}
+	notExists := resp.Error.Data.NotExists
+	if notExists == nil {
+		return fmt.Errorf("%s: missing object %s error is not notExists: %+v", backend, id, resp.Error.Data)
+	}
+	if notExists.ObjectId != id {
+		return fmt.Errorf("%s: notExists object_id: got %s, want %s", backend, notExists.ObjectId, id)
+	}
+	return nil
+}
+
+func TestParityMultiGetObjects(t *testing.T) {
+	env, ctx := parity(t), liveCtx(t)
+
+	// A random 32-byte id is astronomically unlikely to exist on chain, giving
+	// both backends a notExists entry to render.
+	var missingID sui_types.ObjectID
+	_, err := rand.Read(missingID[:])
+	require.NoError(t, err)
+
+	retryVolatile(t, func() error {
+		objID, err := env.fixtureCoinObjectID(ctx)
+		if err != nil {
+			return err
+		}
+		ids := []sui_types.ObjectID{objID, missingID}
+		fromV1, err := env.v1.MultiGetObjects(ctx, ids, objectParityOptions)
+		if err != nil {
+			return err
+		}
+		fromV2, err := env.v2.MultiGetObjects(ctx, ids, objectParityOptions)
+		if err != nil {
+			return err
+		}
+		if len(fromV1) != len(ids) || len(fromV2) != len(ids) {
+			return fmt.Errorf("result counts: v1 %d, v2 %d, want %d", len(fromV1), len(fromV2), len(ids))
+		}
+		if err := compareObjectResponse(&fromV1[0], &fromV2[0]); err != nil {
+			return fmt.Errorf("existing object: %w", err)
+		}
+		if err := requireNotExistsEntry("v1", &fromV1[1], missingID); err != nil {
+			return err
+		}
+		return requireNotExistsEntry("v2", &fromV2[1], missingID)
 	})
 }
 
