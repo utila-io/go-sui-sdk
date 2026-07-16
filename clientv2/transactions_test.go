@@ -86,3 +86,30 @@ func TestMultiGetTransactionBlocksResultError(t *testing.T) {
 	require.ErrorContains(t, err, digests[1].String())
 	require.ErrorContains(t, err, "transaction not found")
 }
+
+func TestGetTransactionBlockNoTransaction(t *testing.T) {
+	client, mocks := newMockClient(t)
+	digest := testDigest(0)
+	mocks.ledger.EXPECT().
+		GetTransaction(gomock.Any(), gomock.Any()).
+		Return(&pb.GetTransactionResponse{}, nil)
+	_, err := client.GetTransactionBlock(context.Background(), digest,
+		types.SuiTransactionBlockResponseOptions{})
+	require.ErrorContains(t, err, digest.String())
+	require.ErrorContains(t, err, "node returned no transaction")
+}
+
+func TestMultiGetTransactionBlocksEmptyResult(t *testing.T) {
+	client, mocks := newMockClient(t)
+	digests := []sui_types.TransactionDigest{testDigest(0)}
+	// a result with neither transaction nor error must not yield a nil response
+	mocks.ledger.EXPECT().
+		BatchGetTransactions(gomock.Any(), gomock.Any()).
+		Return(&pb.BatchGetTransactionsResponse{
+			Transactions: []*pb.GetTransactionResult{{}},
+		}, nil)
+	_, err := client.MultiGetTransactionBlocks(context.Background(), digests,
+		types.SuiTransactionBlockResponseOptions{})
+	require.ErrorContains(t, err, digests[0].String())
+	require.ErrorContains(t, err, "node returned no transaction")
+}

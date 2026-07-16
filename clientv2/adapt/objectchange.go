@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"regexp"
 
-	"github.com/fardream/go-bcs/bcs"
-
 	pb "github.com/utila-io/go-sui-sdk/clientv2/internal/pb/sui/rpc/v2"
 	"github.com/utila-io/go-sui-sdk/lib"
 	"github.com/utila-io/go-sui-sdk/sui_types"
@@ -13,16 +11,17 @@ import (
 )
 
 // ObjectChanges derives the JSON-RPC showObjectChanges list from the effects'
-// changed_objects. Matching live JSON-RPC nodes, only written objects are
-// rendered — mutated (gas coin included), created and published; deletions,
-// wraps, unwraps and accumulator writes do not appear, and an owner change
-// renders as "mutated" (v1 never emits the legacy "transferred" variant).
-// Unrenderable entries are dropped and reported in the error slice.
-func ObjectChanges(txData []byte, fx *pb.TransactionEffects) ([]lib.TagJson[types.ObjectChange], []error) {
+// changed_objects; sender is the transaction's sender (zero for system
+// transactions, whose kinds sui_types cannot decode — that matches their real
+// sender). Matching live JSON-RPC nodes, only written objects are rendered —
+// mutated (gas coin included), created and published; deletions, wraps,
+// unwraps and accumulator writes do not appear, and an owner change renders as
+// "mutated" (v1 never emits the legacy "transferred" variant). Unrenderable
+// entries are dropped and reported in the error slice.
+func ObjectChanges(sender sui_types.SuiAddress, fx *pb.TransactionEffects) ([]lib.TagJson[types.ObjectChange], []error) {
 	if fx == nil {
 		return nil, nil
 	}
-	sender := transactionSender(txData)
 	var errs []error
 	var out []lib.TagJson[types.ObjectChange]
 	for _, changed := range fx.GetChangedObjects() {
@@ -36,17 +35,6 @@ func ObjectChanges(txData []byte, fx *pb.TransactionEffects) ([]lib.TagJson[type
 		}
 	}
 	return out, errs
-}
-
-// transactionSender BCS-decodes TransactionData and returns V1.Sender. System
-// transaction kinds are not in sui_types' enum and fail to decode; every
-// system transaction's sender is the zero address, which is what that yields.
-func transactionSender(txData []byte) sui_types.SuiAddress {
-	var data sui_types.TransactionData
-	if _, err := bcs.Unmarshal(txData, &data); err != nil || data.V1 == nil {
-		return sui_types.SuiAddress{}
-	}
-	return data.V1.Sender
 }
 
 // objectChange renders one changed_objects entry, or nil for the entries
@@ -147,48 +135,11 @@ func writtenObjectParts(changed *pb.ChangedObject) (sui_types.ObjectID, types.Ob
 	if err != nil {
 		return sui_types.ObjectID{}, types.ObjectOwner{}, err
 	}
-	owner, err := changeOwner(changed.GetOutputOwner())
+	owner, err := objectOwner(changed.GetOutputOwner())
 	if err != nil {
 		return sui_types.ObjectID{}, types.ObjectOwner{}, err
 	}
 	return objectID, owner, nil
-}
-
-// changeOwner converts a proto Owner into the types.ObjectOwner shape used by
-// objectChanges. A CONSENSUS_ADDRESS owner is surfaced as AddressOwner, the
-// closest v1 variant.
-func changeOwner(protoOwner *pb.Owner) (types.ObjectOwner, error) {
-	internal := &types.ObjectOwnerInternal{}
-	switch protoOwner.GetKind() {
-	case pb.Owner_ADDRESS, pb.Owner_CONSENSUS_ADDRESS:
-		addr, err := parseAddress(protoOwner.GetAddress())
-		if err != nil {
-			return types.ObjectOwner{}, fmt.Errorf("owner: %w", err)
-		}
-		internal.AddressOwner = &addr
-	case pb.Owner_OBJECT:
-		addr, err := parseAddress(protoOwner.GetAddress())
-		if err != nil {
-			return types.ObjectOwner{}, fmt.Errorf("owner: %w", err)
-		}
-		internal.ObjectOwner = &addr
-	case pb.Owner_SHARED:
-		version := protoOwner.GetVersion()
-		internal.Shared = &struct {
-			InitialSharedVersion *sui_types.SequenceNumber `json:"initial_shared_version"`
-		}{InitialSharedVersion: &version}
-	case pb.Owner_IMMUTABLE:
-		// ObjectOwner's bare-string form ("Immutable") is only settable
-		// through its UnmarshalJSON: the embedded *string is unexported.
-		var owner types.ObjectOwner
-		if err := owner.UnmarshalJSON([]byte(`"Immutable"`)); err != nil {
-			return types.ObjectOwner{}, fmt.Errorf("owner: %w", err)
-		}
-		return owner, nil
-	default:
-		return types.ObjectOwner{}, fmt.Errorf("owner: unknown kind %v", protoOwner.GetKind())
-	}
-	return types.ObjectOwner{ObjectOwnerInternal: internal}, nil
 }
 
 // typeParamSeparator matches generic type parameter separators with no

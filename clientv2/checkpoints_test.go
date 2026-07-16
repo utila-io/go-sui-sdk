@@ -2,10 +2,13 @@ package clientv2
 
 import (
 	"context"
+	"runtime"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -51,7 +54,14 @@ func TestGetCheckpointsAscendingOrder(t *testing.T) {
 	}
 }
 
-func TestGetCheckpointsNotFoundKeepsPrefix(t *testing.T) {
+func serviceInfoResponse(lowest, height uint64) *pb.GetServiceInfoResponse {
+	return &pb.GetServiceInfoResponse{
+		LowestAvailableCheckpoint: proto.Uint64(lowest),
+		CheckpointHeight:          proto.Uint64(height),
+	}
+}
+
+func TestGetCheckpointsNotFoundAtTipKeepsPrefix(t *testing.T) {
 	const start, limit, missing = uint64(100), 20, 7
 	client, mocks := newMockClient(t)
 	for i := range limit {
@@ -66,6 +76,11 @@ func TestGetCheckpointsNotFoundKeepsPrefix(t *testing.T) {
 			call.Return(nil, status.Error(codes.NotFound, "checkpoint not found")).MaxTimes(1)
 		}
 	}
+	// Truncation triggers exactly one classification call; the missing
+	// checkpoint is past the tip, not pruned.
+	mocks.ledger.EXPECT().
+		GetServiceInfo(gomock.Any(), gomock.Any()).
+		Return(serviceInfoResponse(0, start+missing-1), nil)
 
 	checkpoints, err := client.GetCheckpoints(context.Background(), start, limit)
 	require.NoError(t, err)
@@ -73,6 +88,82 @@ func TestGetCheckpointsNotFoundKeepsPrefix(t *testing.T) {
 	for i, checkpoint := range checkpoints {
 		require.Equal(t, start+uint64(i), checkpoint.SequenceNumber.Uint64())
 	}
+}
+
+func TestGetCheckpointsNotFoundPrunedReturnsError(t *testing.T) {
+	const start, limit = uint64(100), 5
+	const lowest, height = uint64(500), uint64(1000)
+	client, mocks := newMockClient(t)
+	for i := range limit {
+		seqNum := start + uint64(i)
+		call := mocks.ledger.EXPECT().
+			GetCheckpoint(gomock.Any(), protoEqual(checkpointRequest(seqNum, checkpointReadMaskPaths...))).
+			Return(nil, status.Error(codes.NotFound, "checkpoint not found"))
+		if i > 0 {
+			call.MaxTimes(1)
+		}
+	}
+	mocks.ledger.EXPECT().
+		GetServiceInfo(gomock.Any(), gomock.Any()).
+		Return(serviceInfoResponse(lowest, height), nil)
+
+	checkpoints, err := client.GetCheckpoints(context.Background(), start, limit)
+	require.Nil(t, checkpoints)
+	require.ErrorContains(t, err, "checkpoint 100 pruned; node retains from 500")
+}
+
+// Regression test for unbounded goroutine spawn: a large limit must not create
+// one goroutine per checkpoint.
+func TestGetCheckpointsBoundedGoroutines(t *testing.T) {
+	const start, limit = uint64(0), 10_000
+	client, mocks := newMockClient(t)
+	var maxGoroutines atomic.Int64
+	mocks.ledger.EXPECT().
+		GetCheckpoint(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(context.Context, *pb.GetCheckpointRequest, ...grpc.CallOption) (*pb.GetCheckpointResponse, error) {
+			for n := int64(runtime.NumGoroutine()); ; {
+				if current := maxGoroutines.Load(); n <= current || maxGoroutines.CompareAndSwap(current, n) {
+					break
+				}
+			}
+			return nil, status.Error(codes.NotFound, "checkpoint not found")
+		}).MinTimes(1)
+	mocks.ledger.EXPECT().
+		GetServiceInfo(gomock.Any(), gomock.Any()).
+		Return(serviceInfoResponse(0, 0), nil)
+	baseline := int64(runtime.NumGoroutine())
+
+	checkpoints, err := client.GetCheckpoints(context.Background(), start, limit)
+	require.NoError(t, err)
+	require.Empty(t, checkpoints)
+	require.Less(t, maxGoroutines.Load()-baseline, int64(100),
+		"goroutine count must stay bounded regardless of limit")
+}
+
+func TestGetCheckpointsHardErrorAbortsRemainingFetches(t *testing.T) {
+	const start, limit = uint64(0), 1_000
+	client, mocks := newMockClient(t)
+	var calls atomic.Int64
+	mocks.ledger.EXPECT().
+		GetCheckpoint(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, req *pb.GetCheckpointRequest, _ ...grpc.CallOption) (*pb.GetCheckpointResponse, error) {
+			calls.Add(1)
+			if req.GetSequenceNumber() == start {
+				return nil, status.Error(codes.Unavailable, "node down")
+			}
+			// Later fetches behave like real RPCs: they only fail once the
+			// hard error cancels the shared context.
+			<-ctx.Done()
+			return nil, status.FromContextError(ctx.Err()).Err()
+		}).AnyTimes()
+
+	checkpoints, err := client.GetCheckpoints(context.Background(), start, limit)
+	require.Nil(t, checkpoints)
+	require.Equal(t, codes.Unavailable, status.Code(err))
+	require.ErrorContains(t, err, "node down")
+	require.Less(t, calls.Load(), int64(limit),
+		"a hard error must cancel remaining fetches instead of running all of them")
+	require.LessOrEqual(t, calls.Load(), int64(3*checkpointFetchConcurrency))
 }
 
 func TestGetCheckpointsNonPositiveLimit(t *testing.T) {

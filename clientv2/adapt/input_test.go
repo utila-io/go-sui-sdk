@@ -17,9 +17,9 @@ import (
 // testRecipientAddress is the transfer recipient in the test transaction.
 const testRecipientAddress = "0x1111111111111111111111111111111111111111111111111111111111111111"
 
-// testTransactionData builds a small but representative TransactionData:
-// a PTB with pure, shared-object and owned-object inputs feeding SplitCoins,
-// TransferObjects and a MoveCall.
+// testTransactionData builds a small but representative TransactionData: a
+// PTB with pure, shared-object, owned-object and receiving inputs feeding
+// SplitCoins, TransferObjects and a MoveCall.
 func testTransactionData(t *testing.T) sui_types.TransactionData {
 	t.Helper()
 	sender := mustAddress(t, longOwnerAddress)
@@ -50,6 +50,11 @@ func testTransactionData(t *testing.T) sui_types.TransactionData {
 				Digest:   lib.Base58(bytes.Repeat([]byte{0x21}, 32)),
 			}}},
 			{Pure: &unresolvedBytes}, // 4: only used by the MoveCall, not resolved
+			{Object: &sui_types.ObjectArg{Receiving: &sui_types.ObjectRef{
+				ObjectId: mustAddress(t, testRecipientAddress),
+				Version:  43,
+				Digest:   lib.Base58(bytes.Repeat([]byte{0x22}, 32)),
+			}}},
 		},
 		Commands: []sui_types.Command{
 			{SplitCoins: &sui_types.SplitCoinsCommand{
@@ -73,6 +78,7 @@ func testTransactionData(t *testing.T) sui_types.TransactionData {
 					{Input: ptr(uint16(2))},
 					{Input: ptr(uint16(3))},
 					{Input: ptr(uint16(4))},
+					{Input: ptr(uint16(5))},
 					{NestedResult: &sui_types.NestedResultArgument{Result1: 0, Result2: 0}},
 				},
 			}},
@@ -162,8 +168,9 @@ func TestTransactionBlock(t *testing.T) {
 	}
 
 	t.Run("programmable transaction", func(t *testing.T) {
-		block, err := TransactionBlock(testTransactionDataBytes(t), signatures)
+		data, err := DecodeTransactionData(testTransactionDataBytes(t))
 		require.NoError(t, err)
+		block := TransactionBlock(data, signatures)
 
 		v1 := block.Data.Data.V1
 		require.NotNil(t, v1)
@@ -202,6 +209,13 @@ func TestTransactionBlock(t *testing.T) {
 				"digest":     lib.Base58(bytes.Repeat([]byte{0x21}, 32)).String(),
 			},
 			map[string]interface{}{"type": "pure", "valueType": nil, "value": []int{1, 2, 3}},
+			map[string]interface{}{
+				"type":       "object",
+				"objectType": "receiving",
+				"objectId":   testRecipientAddress,
+				"version":    "43",
+				"digest":     lib.Base58(bytes.Repeat([]byte{0x22}, 32)).String(),
+			},
 		}, ptb.Inputs)
 
 		require.Equal(t, []interface{}{
@@ -222,6 +236,7 @@ func TestTransactionBlock(t *testing.T) {
 					map[string]interface{}{"Input": uint16(2)},
 					map[string]interface{}{"Input": uint16(3)},
 					map[string]interface{}{"Input": uint16(4)},
+					map[string]interface{}{"Input": uint16(5)},
 					map[string]interface{}{"NestedResult": []interface{}{uint16(0), uint16(0)}},
 				},
 			}},
@@ -243,8 +258,9 @@ func TestTransactionBlock(t *testing.T) {
 		}})
 		require.NoError(t, err)
 
-		block, err := TransactionBlock(txData, nil)
+		data, err := DecodeTransactionData(txData)
 		require.NoError(t, err)
+		block := TransactionBlock(data, nil)
 		kind := block.Data.Data.V1.Transaction.Data
 		require.Nil(t, kind.ProgrammableTransaction)
 		require.NotNil(t, kind.ChangeEpoch)
@@ -268,8 +284,9 @@ func TestTransactionBlock(t *testing.T) {
 		}})
 		require.NoError(t, err)
 
-		block, err := TransactionBlock(txData, nil)
+		data, err := DecodeTransactionData(txData)
 		require.NoError(t, err)
+		block := TransactionBlock(data, nil)
 		kind := block.Data.Data.V1.Transaction.Data
 		require.NotNil(t, kind.ConsensusCommitPrologue)
 		require.EqualValues(t, 12, kind.ConsensusCommitPrologue.Epoch)
@@ -277,8 +294,8 @@ func TestTransactionBlock(t *testing.T) {
 		require.EqualValues(t, 1700000000001, kind.ConsensusCommitPrologue.CommitTimestampMs)
 	})
 
-	t.Run("garbage bytes fail", func(t *testing.T) {
-		_, err := TransactionBlock([]byte{0xff, 0xee}, nil)
+	t.Run("garbage bytes fail to decode", func(t *testing.T) {
+		_, err := DecodeTransactionData([]byte{0xff, 0xee})
 		require.Error(t, err)
 	})
 }

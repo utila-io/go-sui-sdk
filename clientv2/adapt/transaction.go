@@ -57,16 +57,24 @@ func Response(tx *pb.ExecutedTransaction, options types.SuiTransactionBlockRespo
 	response := &types.SuiTransactionBlockResponse{
 		Digest: parseDigest(tx.GetDigest()),
 	}
+	// The transaction BCS is decoded at most once and shared between the
+	// showInput and showObjectChanges paths. System transaction kinds are not
+	// in sui_types' enum and fail to decode; their real sender is the zero
+	// address, which is what the failed decode yields for object changes.
+	var data *sui_types.TransactionData
 	if txData := tx.GetTransaction().GetBcs().GetValue(); len(txData) > 0 {
+		var decodeErr error
+		if options.ShowInput || options.ShowObjectChanges {
+			data, decodeErr = DecodeTransactionData(txData)
+		}
 		if options.ShowRawInput {
 			response.RawTransaction = RawSenderSignedData(txData, tx.GetSignatures())
 		}
 		if options.ShowInput {
-			block, err := TransactionBlock(txData, tx.GetSignatures())
-			if err != nil {
-				response.Errors = append(response.Errors, err.Error())
+			if decodeErr != nil {
+				response.Errors = append(response.Errors, decodeErr.Error())
 			} else {
-				response.Transaction = block
+				response.Transaction = TransactionBlock(data, tx.GetSignatures())
 			}
 		}
 	}
@@ -82,7 +90,11 @@ func Response(tx *pb.ExecutedTransaction, options types.SuiTransactionBlockRespo
 	}
 	var changeErrs []error
 	if options.ShowObjectChanges {
-		response.ObjectChanges, changeErrs = ObjectChanges(tx.GetTransaction().GetBcs().GetValue(), tx.GetEffects())
+		var sender sui_types.SuiAddress
+		if data != nil {
+			sender = data.V1.Sender
+		}
+		response.ObjectChanges, changeErrs = ObjectChanges(sender, tx.GetEffects())
 	}
 	events, eventErrs := Events(tx.GetDigest(), tx.GetEvents())
 	response.Events = events

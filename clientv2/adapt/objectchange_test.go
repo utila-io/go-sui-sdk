@@ -28,13 +28,12 @@ func addressOwner(addr string) *pb.Owner {
 }
 
 func TestObjectChanges(t *testing.T) {
-	txData := testTransactionDataBytes(t)
 	sender := mustAddress(t, longOwnerAddress)
 	outDigestStr, outDigest := testDigest(0x51)
 	inDigestStr, _ := testDigest(0x52)
 
 	t.Run("nil effects yield nothing", func(t *testing.T) {
-		got, errs := ObjectChanges(txData, nil)
+		got, errs := ObjectChanges(sender, nil)
 		require.Empty(t, errs)
 		require.Nil(t, got)
 	})
@@ -52,7 +51,7 @@ func TestObjectChanges(t *testing.T) {
 		gasCoin.OutputOwner = addressOwner(longOwnerAddress)
 		gasCoin.ObjectType = proto.String(longSuiPackage + "::coin::Coin<" + longSuiType + ">")
 
-		got, errs := ObjectChanges(txData, &pb.TransactionEffects{
+		got, errs := ObjectChanges(sender, &pb.TransactionEffects{
 			ChangedObjects: []*pb.ChangedObject{gasCoin},
 		})
 		require.Empty(t, errs)
@@ -96,7 +95,7 @@ func TestObjectChanges(t *testing.T) {
 		transferred.OutputOwner = addressOwner(testRecipientAddress)
 		transferred.ObjectType = proto.String(longUsdcType)
 
-		got, errs := ObjectChanges(txData, &pb.TransactionEffects{
+		got, errs := ObjectChanges(sender, &pb.TransactionEffects{
 			ChangedObjects: []*pb.ChangedObject{transferred},
 		})
 		require.Empty(t, errs)
@@ -119,7 +118,7 @@ func TestObjectChanges(t *testing.T) {
 		// gRPC prints generic parameters without the space v1 uses.
 		created.ObjectType = proto.String(longSuiPackage + "::dynamic_field::Field<u64," + longUsdcType + ">")
 
-		got, errs := ObjectChanges(txData, &pb.TransactionEffects{
+		got, errs := ObjectChanges(sender, &pb.TransactionEffects{
 			ChangedObjects: []*pb.ChangedObject{created},
 		})
 		require.Empty(t, errs)
@@ -143,7 +142,7 @@ func TestObjectChanges(t *testing.T) {
 		frozen.OutputOwner = &pb.Owner{Kind: pb.Owner_IMMUTABLE.Enum()}
 		frozen.ObjectType = proto.String(longUsdcType)
 
-		got, errs := ObjectChanges(txData, &pb.TransactionEffects{
+		got, errs := ObjectChanges(sender, &pb.TransactionEffects{
 			ChangedObjects: []*pb.ChangedObject{frozen},
 		})
 		require.Empty(t, errs)
@@ -162,7 +161,7 @@ func TestObjectChanges(t *testing.T) {
 		published.OutputDigest = proto.String(outDigestStr)
 		published.ObjectType = proto.String("package")
 
-		got, errs := ObjectChanges(txData, &pb.TransactionEffects{
+		got, errs := ObjectChanges(sender, &pb.TransactionEffects{
 			ChangedObjects: []*pb.ChangedObject{published},
 		})
 		require.Empty(t, errs)
@@ -180,7 +179,7 @@ func TestObjectChanges(t *testing.T) {
 			pb.ChangedObject_INPUT_OBJECT_STATE_EXISTS,
 			pb.ChangedObject_OUTPUT_OBJECT_STATE_PACKAGE_WRITE,
 			pb.ChangedObject_NONE)
-		got, errs := ObjectChanges(txData, &pb.TransactionEffects{
+		got, errs := ObjectChanges(sender, &pb.TransactionEffects{
 			ChangedObjects: []*pb.ChangedObject{upgrade},
 		})
 		require.Empty(t, errs)
@@ -218,33 +217,11 @@ func TestObjectChanges(t *testing.T) {
 			IntegerValue:    proto.Uint64(100),
 		}
 
-		got, errs := ObjectChanges(txData, &pb.TransactionEffects{
+		got, errs := ObjectChanges(sender, &pb.TransactionEffects{
 			ChangedObjects: []*pb.ChangedObject{deleted, wrapped, unwrapped, createdThenWrapped, accumulator},
 		})
 		require.Empty(t, errs)
 		require.Empty(t, got)
-	})
-
-	t.Run("system transaction sender is the zero address", func(t *testing.T) {
-		// System transaction kinds are unknown to sui_types and fail to
-		// BCS-decode; their sender is always 0x0.
-		clock := changedObject(longObjectID,
-			pb.ChangedObject_INPUT_OBJECT_STATE_EXISTS,
-			pb.ChangedObject_OUTPUT_OBJECT_STATE_OBJECT_WRITE,
-			pb.ChangedObject_NONE)
-		clock.InputVersion = proto.Uint64(1)
-		clock.OutputVersion = proto.Uint64(2)
-		clock.OutputDigest = proto.String(outDigestStr)
-		clock.OutputOwner = &pb.Owner{Kind: pb.Owner_SHARED.Enum(), Version: proto.Uint64(1)}
-		clock.ObjectType = proto.String(longSuiPackage + "::clock::Clock")
-
-		got, errs := ObjectChanges([]byte{0x00, 0x09, 0xff}, &pb.TransactionEffects{
-			ChangedObjects: []*pb.ChangedObject{clock},
-		})
-		require.Empty(t, errs)
-		require.Len(t, got, 1)
-		require.Equal(t, "0x0000000000000000000000000000000000000000000000000000000000000000",
-			got[0].Data.Mutated.Sender.String())
 	})
 
 	t.Run("unparseable entries are reported and skipped", func(t *testing.T) {
@@ -253,7 +230,7 @@ func TestObjectChanges(t *testing.T) {
 			pb.ChangedObject_OUTPUT_OBJECT_STATE_OBJECT_WRITE,
 			pb.ChangedObject_CREATED)
 		bad.OutputOwner = addressOwner(longOwnerAddress)
-		got, errs := ObjectChanges(txData, &pb.TransactionEffects{
+		got, errs := ObjectChanges(sender, &pb.TransactionEffects{
 			ChangedObjects: []*pb.ChangedObject{bad},
 		})
 		require.Empty(t, got)
@@ -298,5 +275,31 @@ func TestResponseObjectChanges(t *testing.T) {
 		require.Len(t, got.ObjectChanges, 1)
 		require.NotNil(t, got.ObjectChanges[0].Data.Mutated)
 		require.Empty(t, got.Errors)
+	})
+
+	t.Run("receiving input decodes and keeps the real sender", func(t *testing.T) {
+		// The test transaction's PTB contains an ObjectArg::Receiving input;
+		// without the Receiving variant its BCS decode fails and the sender
+		// silently falls back to 0x0.
+		got := Response(tx(t), types.SuiTransactionBlockResponseOptions{
+			ShowInput:         true,
+			ShowObjectChanges: true,
+		})
+		require.Empty(t, got.Errors)
+		require.NotNil(t, got.Transaction, "parsed transaction present")
+		require.Len(t, got.ObjectChanges, 1)
+		require.Equal(t, longOwnerAddress, got.ObjectChanges[0].Data.Mutated.Sender.String())
+	})
+
+	t.Run("undecodable system transaction sender is the zero address", func(t *testing.T) {
+		// System transaction kinds are unknown to sui_types and fail to
+		// BCS-decode; their sender is always 0x0.
+		systemTx := tx(t)
+		systemTx.Transaction.Bcs.Value = []byte{0x00, 0x09, 0xff}
+		got := Response(systemTx, types.SuiTransactionBlockResponseOptions{ShowObjectChanges: true})
+		require.Empty(t, got.Errors)
+		require.Len(t, got.ObjectChanges, 1)
+		require.Equal(t, "0x0000000000000000000000000000000000000000000000000000000000000000",
+			got.ObjectChanges[0].Data.Mutated.Sender.String())
 	})
 }

@@ -26,6 +26,15 @@ var simulateOptions = types.SuiTransactionBlockResponseOptions{
 	ShowBalanceChanges: true,
 }
 
+// dryRunOptions additionally derives object changes, which v1 dry runs return;
+// that pulls transaction.bcs and effects into the read mask.
+var dryRunOptions = types.SuiTransactionBlockResponseOptions{
+	ShowEffects:        true,
+	ShowEvents:         true,
+	ShowObjectChanges:  true,
+	ShowBalanceChanges: true,
+}
+
 // ExecuteTransactionBlock submits a signed transaction. requestType is
 // ignored: gRPC execution always waits for effects, which is at least as
 // strong as WaitForEffectsCert.
@@ -56,22 +65,27 @@ func (c *Client) ExecuteTransactionBlock(
 	if err != nil {
 		return nil, fmt.Errorf("ExecuteTransactionBlock: %w", err)
 	}
-	return adapt.Response(resp.GetTransaction(), opts), nil
+	response := adapt.Response(resp.GetTransaction(), opts)
+	if response == nil {
+		return nil, fmt.Errorf("ExecuteTransactionBlock: node returned no transaction")
+	}
+	return response, nil
 }
 
 // DryRunTransaction simulates a full BCS TransactionData with checks enabled.
 // The response's Input field is not reconstructed and stays zero.
 func (c *Client) DryRunTransaction(ctx context.Context, txBytes lib.Base64Data) (*types.DryRunTransactionBlockResponse, error) {
-	resp, err := c.simulate(ctx, txBytes.Data(), pb.SimulateTransactionRequest_ENABLED)
+	resp, err := c.simulate(ctx, txBytes.Data(), pb.SimulateTransactionRequest_ENABLED, dryRunOptions)
 	if err != nil {
 		return nil, fmt.Errorf("DryRunTransaction: %w", err)
 	}
-	response := adapt.Response(resp.GetTransaction(), simulateOptions)
+	response := adapt.Response(resp.GetTransaction(), dryRunOptions)
 	if response == nil {
 		return nil, fmt.Errorf("DryRunTransaction: node returned no transaction")
 	}
 	out := &types.DryRunTransactionBlockResponse{
 		Events:         response.Events,
+		ObjectChanges:  response.ObjectChanges,
 		BalanceChanges: response.BalanceChanges,
 	}
 	if response.Effects != nil {
@@ -102,7 +116,7 @@ func (c *Client) DevInspectTransactionBlock(
 		price = referencePrice.Uint64()
 	}
 	txData := adapt.DevInspectTransactionData(sender, txKindBytes.Data(), price)
-	resp, err := c.simulate(ctx, txData, pb.SimulateTransactionRequest_DISABLED, "command_outputs")
+	resp, err := c.simulate(ctx, txData, pb.SimulateTransactionRequest_DISABLED, simulateOptions, "command_outputs")
 	if err != nil {
 		return nil, fmt.Errorf("DevInspectTransactionBlock: %w", err)
 	}
@@ -131,9 +145,10 @@ func (c *Client) simulate(
 	ctx context.Context,
 	txData []byte,
 	checks pb.SimulateTransactionRequest_TransactionChecks,
+	options types.SuiTransactionBlockResponseOptions,
 	extraPaths ...string,
 ) (*pb.SimulateTransactionResponse, error) {
-	paths := adapt.PrefixPaths(simulateReadMaskPrefix, adapt.ResponseReadMaskPaths(simulateOptions))
+	paths := adapt.PrefixPaths(simulateReadMaskPrefix, adapt.ResponseReadMaskPaths(options))
 	paths = append(paths, extraPaths...)
 	return c.exec.SimulateTransaction(ctx, &pb.SimulateTransactionRequest{
 		Transaction: &pb.Transaction{Bcs: &pb.Bcs{Value: txData}},

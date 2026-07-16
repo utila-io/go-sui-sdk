@@ -52,16 +52,32 @@ func TestWithHeadersSendsHeaders(t *testing.T) {
 }
 
 func TestWithHeadersPanicsOnInvalidKey(t *testing.T) {
-	for _, key := range []string{"", ":authority", "grpc-timeout", "Grpc-Timeout"} {
+	for _, key := range []string{"", ":authority", "grpc-timeout", "Grpc-Timeout", "x api key"} {
 		require.Panics(t, func() { WithHeaders(map[string]string{key: "v"}) }, "key %q", key)
 	}
 }
 
 func TestValidateHeaderKey(t *testing.T) {
-	require.NoError(t, ValidateHeaderKey("x-api-key"))
-	require.NoError(t, ValidateHeaderKey("Authorization"))
-	require.Error(t, ValidateHeaderKey(""))
-	require.Error(t, ValidateHeaderKey(":path"))
-	require.Error(t, ValidateHeaderKey("grpc-encoding"))
-	require.Error(t, ValidateHeaderKey("GRPC-Encoding"))
+	for _, key := range []string{
+		"x-api-key",
+		"Authorization", // uppercase normalizes to lowercase, still valid
+		"x_key.v1",
+		"key0-9",
+	} {
+		require.NoError(t, ValidateHeaderKey(key), "key %q", key)
+	}
+	for _, key := range []string{
+		"",
+		":path",
+		"grpc-encoding",
+		"GRPC-Encoding",
+		"x api key",  // space
+		"x-api-key ", // trailing space
+		"clé",        // non-ASCII
+		"日本語",
+		"x@key",
+		"key;v",
+	} {
+		require.Error(t, ValidateHeaderKey(key), "key %q", key)
+	}
 }

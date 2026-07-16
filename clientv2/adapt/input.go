@@ -46,11 +46,9 @@ func appendULEB128(buf []byte, v uint64) []byte {
 	return append(buf, byte(v))
 }
 
-// TransactionBlock BCS-decodes bare TransactionData bytes into the parsed
-// JSON-RPC showInput shape. Pure input value types are only inferred from
-// built-in command usage (see pureValueTypes); unresolved pures render as raw
-// bytes with a null valueType, like JSON-RPC's own unresolvable pures.
-func TransactionBlock(txData []byte, signatures []*pb.UserSignature) (*types.SuiTransactionBlock, error) {
+// DecodeTransactionData BCS-decodes bare TransactionData bytes. System
+// transaction kinds are not in sui_types' enum and fail to decode.
+func DecodeTransactionData(txData []byte) (*sui_types.TransactionData, error) {
 	var data sui_types.TransactionData
 	if _, err := bcs.Unmarshal(txData, &data); err != nil {
 		return nil, fmt.Errorf("decode TransactionData: %w", err)
@@ -58,6 +56,14 @@ func TransactionBlock(txData []byte, signatures []*pb.UserSignature) (*types.Sui
 	if data.V1 == nil {
 		return nil, errors.New("decode TransactionData: unknown version")
 	}
+	return &data, nil
+}
+
+// TransactionBlock renders decoded TransactionData into the parsed JSON-RPC
+// showInput shape. Pure input value types are only inferred from built-in
+// command usage (see pureValueTypes); unresolved pures render as raw bytes
+// with a null valueType, like JSON-RPC's own unresolvable pures.
+func TransactionBlock(data *sui_types.TransactionData, signatures []*pb.UserSignature) *types.SuiTransactionBlock {
 	gasData := types.SuiGasData{
 		Payment: make([]types.SuiObjectRef, 0, len(data.V1.GasData.Payment)),
 		Owner:   data.V1.GasData.Owner.String(),
@@ -88,7 +94,7 @@ func TransactionBlock(txData []byte, signatures []*pb.UserSignature) (*types.Sui
 		block.TxSignatures = append(block.TxSignatures,
 			base64.StdEncoding.EncodeToString(signature.GetBcs().GetValue()))
 	}
-	return block, nil
+	return block
 }
 
 // transactionBlockKind maps a decoded TransactionKind to the JSON-RPC kind.
@@ -165,6 +171,15 @@ func callArgJSON(arg sui_types.CallArg, valueType string) map[string]interface{}
 		return map[string]interface{}{
 			"type":       "object",
 			"objectType": "immOrOwnedObject",
+			"objectId":   ref.ObjectId.String(),
+			"version":    strconv.FormatUint(ref.Version, 10),
+			"digest":     ref.Digest.String(),
+		}
+	case arg.Object != nil && arg.Object.Receiving != nil:
+		ref := arg.Object.Receiving
+		return map[string]interface{}{
+			"type":       "object",
+			"objectType": "receiving",
 			"objectId":   ref.ObjectId.String(),
 			"version":    strconv.FormatUint(ref.Version, 10),
 			"digest":     ref.Digest.String(),

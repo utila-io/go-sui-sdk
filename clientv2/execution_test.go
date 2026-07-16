@@ -51,6 +51,76 @@ func TestExecuteTransactionBlock(t *testing.T) {
 	require.Equal(t, digest, response.Digest.String())
 }
 
+func TestExecuteTransactionBlockNoTransaction(t *testing.T) {
+	client, mocks := newMockClient(t)
+	mocks.exec.EXPECT().
+		ExecuteTransaction(gomock.Any(), gomock.Any()).
+		Return(&pb.ExecuteTransactionResponse{}, nil)
+	_, err := client.ExecuteTransactionBlock(context.Background(), lib.Base64Data{0x01},
+		nil, nil, types.TxnRequestTypeWaitForLocalExecution)
+	require.ErrorContains(t, err, "node returned no transaction")
+}
+
+func TestDryRunTransaction(t *testing.T) {
+	client, mocks := newMockClient(t)
+	sender := testAddress(t)
+	// valid TransactionData (empty ProgrammableTransaction kind) so the object
+	// changes' sender decodes from the echoed transaction BCS
+	txData := adapt.DevInspectTransactionData(sender, []byte{0x00, 0x00, 0x00}, 1000)
+	objectID := "0x1a2b3c4d5e6f00112233445566778899aabbccddeeff00112233445566778899"
+	mutated := &pb.ChangedObject{
+		ObjectId:      proto.String(objectID),
+		InputState:    pb.ChangedObject_INPUT_OBJECT_STATE_EXISTS.Enum(),
+		InputVersion:  proto.Uint64(5),
+		OutputState:   pb.ChangedObject_OUTPUT_OBJECT_STATE_OBJECT_WRITE.Enum(),
+		OutputVersion: proto.Uint64(6),
+		OutputDigest:  proto.String(testDigest(7).String()),
+		OutputOwner:   &pb.Owner{Kind: pb.Owner_ADDRESS.Enum(), Address: proto.String(sender.String())},
+		IdOperation:   pb.ChangedObject_NONE.Enum(),
+		ObjectType:    proto.String("0x2::coin::Coin<0x2::sui::SUI>"),
+	}
+
+	mocks.exec.EXPECT().
+		SimulateTransaction(gomock.Any(), protoEqual(&pb.SimulateTransactionRequest{
+			Transaction: &pb.Transaction{Bcs: &pb.Bcs{Value: txData}},
+			ReadMask: &fieldmaskpb.FieldMask{Paths: []string{
+				"transaction.digest", "transaction.checkpoint", "transaction.timestamp",
+				"transaction.transaction.bcs", "transaction.effects", "transaction.events",
+				"transaction.balance_changes",
+			}},
+			Checks: pb.SimulateTransactionRequest_ENABLED.Enum(),
+		})).
+		Return(&pb.SimulateTransactionResponse{
+			Transaction: &pb.ExecutedTransaction{
+				Digest:      proto.String(testDigest(3).String()),
+				Transaction: &pb.Transaction{Bcs: &pb.Bcs{Value: txData}},
+				Effects:     &pb.TransactionEffects{ChangedObjects: []*pb.ChangedObject{mutated}},
+			},
+		}, nil)
+
+	response, err := client.DryRunTransaction(context.Background(), lib.Base64Data(txData))
+	require.NoError(t, err)
+	require.Len(t, response.ObjectChanges, 1)
+	change := response.ObjectChanges[0].Data
+	require.NotNil(t, change.Mutated)
+	require.Equal(t, sender, change.Mutated.Sender)
+	require.Equal(t, objectID, change.Mutated.ObjectId.String())
+	require.Equal(t, "0x2::coin::Coin<0x2::sui::SUI>", change.Mutated.ObjectType)
+	require.Equal(t, uint64(6), change.Mutated.Version.Uint64())
+	require.Equal(t, uint64(5), change.Mutated.PreviousVersion.Uint64())
+	require.NotNil(t, change.Mutated.Owner.ObjectOwnerInternal)
+	require.Equal(t, &sender, change.Mutated.Owner.AddressOwner)
+}
+
+func TestDryRunTransactionNoTransaction(t *testing.T) {
+	client, mocks := newMockClient(t)
+	mocks.exec.EXPECT().
+		SimulateTransaction(gomock.Any(), gomock.Any()).
+		Return(&pb.SimulateTransactionResponse{}, nil)
+	_, err := client.DryRunTransaction(context.Background(), lib.Base64Data{0x01})
+	require.ErrorContains(t, err, "node returned no transaction")
+}
+
 func TestExecuteTransactionBlockBadSignature(t *testing.T) {
 	client, _ := newMockClient(t)
 	_, err := client.ExecuteTransactionBlock(context.Background(), lib.Base64Data{0x01},

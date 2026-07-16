@@ -37,6 +37,13 @@ func TestParseEndpointRejected(t *testing.T) {
 		"https://fullnode.mainnet.sui.io",
 		"http://localhost:9000",
 		"ftp://x",
+		// URL paths and parameters make garbage dial targets
+		"fullnode.mainnet.sui.io:443/rpc",
+		"fullnode.mainnet.sui.io/rpc",
+		"grpc://node.example:9000/rpc",
+		"grpc://node.example:9000/rpc/",
+		"node.example:9000?tls=off",
+		"node.example:9000#frag",
 	} {
 		_, err := parseEndpoint(endpoint)
 		require.Error(t, err, endpoint)
@@ -44,4 +51,7 @@ func TestParseEndpointRejected(t *testing.T) {
 
 	_, err := NewClient("https://fullnode.mainnet.sui.io:443")
 	require.ErrorContains(t, err, "grpc://host:port or host:port")
+
+	_, err = NewClient("grpc://node.example:9000/rpc")
+	require.ErrorContains(t, err, "must be host:port")
 }

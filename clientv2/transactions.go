@@ -27,7 +27,11 @@ func (c *Client) GetTransactionBlock(
 	if err != nil {
 		return nil, fmt.Errorf("GetTransactionBlock: %w", err)
 	}
-	return adapt.Response(resp.GetTransaction(), options), nil
+	response := adapt.Response(resp.GetTransaction(), options)
+	if response == nil {
+		return nil, fmt.Errorf("GetTransactionBlock %s: node returned no transaction", digest.String())
+	}
+	return response, nil
 }
 
 // MultiGetTransactionBlocks returns the executed transactions in digest
@@ -72,7 +76,11 @@ func (c *Client) batchGetTransactions(
 			if resultErr := result.GetError(); resultErr != nil {
 				return nil, fmt.Errorf("transaction %s: %s", digests[start+i], resultErr.GetMessage())
 			}
-			responses = append(responses, adapt.Response(result.GetTransaction(), options))
+			response := adapt.Response(result.GetTransaction(), options)
+			if response == nil {
+				return nil, fmt.Errorf("transaction %s: node returned no transaction", digests[start+i])
+			}
+			responses = append(responses, response)
 		}
 	}
 	return responses, nil

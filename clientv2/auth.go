@@ -9,7 +9,8 @@ import (
 )
 
 // ValidateHeaderKey rejects keys gRPC reserves or would fail on at RPC time:
-// empty, ":"-prefixed pseudo-headers, and the "grpc-" prefix.
+// empty, ":"-prefixed pseudo-headers, the "grpc-" prefix, and characters
+// outside the gRPC metadata key charset ([a-z0-9-_.] after lowercasing).
 func ValidateHeaderKey(key string) error {
 	key = strings.ToLower(key)
 	switch {
@@ -19,6 +20,11 @@ func ValidateHeaderKey(key string) error {
 		return fmt.Errorf("header key %q: pseudo-headers are reserved", key)
 	case strings.HasPrefix(key, "grpc-"):
 		return fmt.Errorf("header key %q: the grpc- prefix is reserved", key)
+	}
+	for _, r := range key {
+		if !('a' <= r && r <= 'z' || '0' <= r && r <= '9' || r == '-' || r == '_' || r == '.') {
+			return fmt.Errorf("header key %q: gRPC metadata keys allow only letters, digits, '-', '_' and '.'", key)
+		}
 	}
 	return nil
 }

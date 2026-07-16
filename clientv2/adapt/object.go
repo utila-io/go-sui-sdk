@@ -1,6 +1,8 @@
 package adapt
 
 import (
+	"fmt"
+
 	pb "github.com/utila-io/go-sui-sdk/clientv2/internal/pb/sui/rpc/v2"
 	"github.com/utila-io/go-sui-sdk/lib"
 	"github.com/utila-io/go-sui-sdk/sui_types"
@@ -68,7 +70,11 @@ func ObjectData(obj *pb.Object, options *types.SuiObjectDataOptions) (*types.Sui
 		data.Bcs = rawData(obj)
 	}
 	if options.ShowOwner && obj.GetOwner() != nil {
-		data.Owner = objectOwner(obj.GetOwner())
+		owner, err := objectOwner(obj.GetOwner())
+		if err != nil {
+			return nil, err
+		}
+		data.Owner = &owner
 	}
 	if options.ShowPreviousTransaction && obj.GetPreviousTransaction() != "" {
 		previousTx := parseDigest(obj.GetPreviousTransaction())
@@ -137,37 +143,38 @@ func rawData(obj *pb.Object) *lib.TagJson[types.SuiRawData] {
 }
 
 // objectOwner converts a proto Owner into the JSON-RPC ObjectOwner union used
-// on object data and balance changes.
-func objectOwner(protoOwner *pb.Owner) *types.ObjectOwner {
+// on object data and object changes. A CONSENSUS_ADDRESS owner is surfaced as
+// AddressOwner, the closest v1 variant.
+func objectOwner(protoOwner *pb.Owner) (types.ObjectOwner, error) {
+	internal := &types.ObjectOwnerInternal{}
 	switch protoOwner.GetKind() {
 	case pb.Owner_ADDRESS, pb.Owner_CONSENSUS_ADDRESS:
-		if addr, err := parseAddress(protoOwner.GetAddress()); err == nil {
-			return &types.ObjectOwner{
-				ObjectOwnerInternal: &types.ObjectOwnerInternal{AddressOwner: &addr},
-			}
+		addr, err := parseAddress(protoOwner.GetAddress())
+		if err != nil {
+			return types.ObjectOwner{}, fmt.Errorf("owner: %w", err)
 		}
+		internal.AddressOwner = &addr
 	case pb.Owner_OBJECT:
-		if addr, err := parseAddress(protoOwner.GetAddress()); err == nil {
-			return &types.ObjectOwner{
-				ObjectOwnerInternal: &types.ObjectOwnerInternal{ObjectOwner: &addr},
-			}
+		addr, err := parseAddress(protoOwner.GetAddress())
+		if err != nil {
+			return types.ObjectOwner{}, fmt.Errorf("owner: %w", err)
 		}
+		internal.ObjectOwner = &addr
 	case pb.Owner_SHARED:
 		version := protoOwner.GetVersion()
-		return &types.ObjectOwner{
-			ObjectOwnerInternal: &types.ObjectOwnerInternal{
-				Shared: &struct {
-					InitialSharedVersion *sui_types.SequenceNumber `json:"initial_shared_version"`
-				}{InitialSharedVersion: &version},
-			},
-		}
+		internal.Shared = &struct {
+			InitialSharedVersion *sui_types.SequenceNumber `json:"initial_shared_version"`
+		}{InitialSharedVersion: &version}
 	case pb.Owner_IMMUTABLE:
-		// The string variant of ObjectOwner is only settable via JSON (the
-		// field is unexported), matching how v1 responses populate it.
-		var immutable types.ObjectOwner
-		if err := immutable.UnmarshalJSON([]byte(`"Immutable"`)); err == nil {
-			return &immutable
+		// ObjectOwner's bare-string form ("Immutable") is only settable
+		// through its UnmarshalJSON: the embedded *string is unexported.
+		var owner types.ObjectOwner
+		if err := owner.UnmarshalJSON([]byte(`"Immutable"`)); err != nil {
+			return types.ObjectOwner{}, fmt.Errorf("owner: %w", err)
 		}
+		return owner, nil
+	default:
+		return types.ObjectOwner{}, fmt.Errorf("owner: unknown kind %v", protoOwner.GetKind())
 	}
-	return nil
+	return types.ObjectOwner{ObjectOwnerInternal: internal}, nil
 }

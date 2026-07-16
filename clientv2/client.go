@@ -96,6 +96,9 @@ func parseEndpoint(endpoint string) (target string, err error) {
 	if rest == "" {
 		return "", errors.New("empty gRPC endpoint")
 	}
+	if strings.ContainsAny(rest, "/?#") {
+		return "", fmt.Errorf("gRPC endpoint %q must be host:port; URL paths and parameters cannot be dialed (send headers via WithHeaders instead)", endpoint)
+	}
 	if _, _, splitErr := net.SplitHostPort(rest); splitErr != nil {
 		rest += ":443"
 	}
