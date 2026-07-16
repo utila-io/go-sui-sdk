@@ -15,14 +15,16 @@ import (
 
 // ResponseReadMaskPaths maps response options to ExecutedTransaction read mask
 // paths. digest, checkpoint and timestamp are always fetched (JSON-RPC always
-// returns them). ShowObjectChanges has no gRPC equivalent and is ignored; the
-// created/mutated/deleted breakdown is available via ShowEffects.
+// returns them). ShowObjectChanges is derived from the effects and the
+// transaction BCS (its per-entry sender), so it fetches both.
 func ResponseReadMaskPaths(options types.SuiTransactionBlockResponseOptions) []string {
 	paths := []string{"digest", "checkpoint", "timestamp"}
 	if options.ShowInput || options.ShowRawInput {
 		paths = append(paths, "transaction.bcs", "signatures")
+	} else if options.ShowObjectChanges {
+		paths = append(paths, "transaction.bcs")
 	}
-	if options.ShowEffects {
+	if options.ShowEffects || options.ShowObjectChanges {
 		paths = append(paths, "effects")
 	}
 	if options.ShowEvents {
@@ -68,15 +70,25 @@ func Response(tx *pb.ExecutedTransaction, options types.SuiTransactionBlockRespo
 			}
 		}
 	}
-	effects, effectsErrs := Effects(tx.GetEffects())
-	if effects != nil {
-		response.Effects = &lib.TagJson[types.SuiTransactionBlockEffects]{Data: *effects}
+	// Effects arrive on the wire for ShowObjectChanges too; like JSON-RPC,
+	// they are only echoed back when explicitly requested.
+	var effectsErrs []error
+	if options.ShowEffects {
+		effects, errs := Effects(tx.GetEffects())
+		effectsErrs = errs
+		if effects != nil {
+			response.Effects = &lib.TagJson[types.SuiTransactionBlockEffects]{Data: *effects}
+		}
+	}
+	var changeErrs []error
+	if options.ShowObjectChanges {
+		response.ObjectChanges, changeErrs = ObjectChanges(tx.GetTransaction().GetBcs().GetValue(), tx.GetEffects())
 	}
 	events, eventErrs := Events(tx.GetDigest(), tx.GetEvents())
 	response.Events = events
 	balanceChanges, balanceErrs := BalanceChanges(tx.GetBalanceChanges())
 	response.BalanceChanges = balanceChanges
-	for _, err := range slices.Concat(effectsErrs, eventErrs, balanceErrs) {
+	for _, err := range slices.Concat(effectsErrs, changeErrs, eventErrs, balanceErrs) {
 		response.Errors = append(response.Errors, err.Error())
 	}
 	if tx.Timestamp != nil {

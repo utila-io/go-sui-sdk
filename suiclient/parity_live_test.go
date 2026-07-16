@@ -21,7 +21,7 @@
 // Documented, tolerated backend gaps (asserted as such, not as equality):
 //   - Balance.CoinObjectCount / LockedBalance: no gRPC source, zero on v2.
 //   - Coin.LockedUntilEpoch: no gRPC source, nil on v2.
-//   - ShowObjectChanges / DryRun .Input: not populated by the v2 backend.
+//   - DryRun .Input: not populated by the v2 backend.
 //   - Parsed Transaction pure inputs: v2 only resolves pure input value types
 //     from built-in command usage, not Move call signatures, so input/command
 //     rendering is not compared field-for-field; the fields consumers rely on
@@ -31,6 +31,11 @@
 //   - GetCoins on SIP-58 accounts: v1 lists the accumulator-derived Coin
 //     object, v2's ListOwnedObjects object-type filter does not return it, so
 //     the coin fixture is restricted to accounts without address balances.
+//   - BalanceChanges on SIP-58 movements: v1 reports coin-object movements
+//     and address-balance withdrawals (accumulator splits, e.g. gas paid from
+//     an address balance) but not address-balance deposits (merges); gRPC
+//     balance_changes count both, so the comparator nets the effects' merge
+//     events out of the v2 side before comparing.
 //   - Volatile values (live balances, coin lists, gas price at epoch
 //     boundaries) are fetched back-to-back and the pair is retried on
 //     mismatch.
@@ -42,9 +47,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/big"
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -311,6 +318,52 @@ func balanceChangeKeys(changes []types.BalanceChange) []string {
 	return keys
 }
 
+// withoutAddressBalanceMovements nets the effects' SIP-58 deposit (merge)
+// events out of the gRPC backend's balance changes so they compare against
+// v1, which leaves address-balance deposits out (documented gap, see the
+// file header). Entries that net to zero are dropped.
+func withoutAddressBalanceMovements(changes []types.BalanceChange, effects *lib.TagJson[types.SuiTransactionBlockEffects]) []types.BalanceChange {
+	if effects == nil || effects.Data.V1 == nil || len(effects.Data.V1.AccumulatorEvents) == 0 {
+		return changes
+	}
+	accumulated := map[string]*big.Int{}
+	for _, event := range effects.Data.V1.AccumulatorEvents {
+		if event.Value.Integer == nil || event.Operation != types.AccumulatorOperationMerge {
+			continue
+		}
+		coinType, ok := strings.CutPrefix(event.Ty, "0x2::balance::Balance<")
+		if !ok {
+			continue
+		}
+		coinType = strings.TrimSuffix(coinType, ">")
+		amount := new(big.Int).SetUint64(*event.Value.Integer)
+		key := event.Address + "|" + coinType
+		if total, ok := accumulated[key]; ok {
+			total.Add(total, amount)
+		} else {
+			accumulated[key] = amount
+		}
+	}
+	out := make([]types.BalanceChange, 0, len(changes))
+	for _, change := range changes {
+		if change.Owner.ObjectOwnerInternal != nil && change.Owner.AddressOwner != nil {
+			key := change.Owner.AddressOwner.String() + "|" + change.CoinType
+			if fromAccumulator, ok := accumulated[key]; ok {
+				amount, parsed := new(big.Int).SetString(change.Amount, 10)
+				if parsed {
+					amount.Sub(amount, fromAccumulator)
+					if amount.Sign() == 0 {
+						continue
+					}
+					change.Amount = amount.String()
+				}
+			}
+		}
+		out = append(out, change)
+	}
+	return out
+}
+
 func eventTypes(events []types.SuiEvent) []string {
 	out := make([]string, len(events))
 	for i, event := range events {
@@ -338,7 +391,11 @@ func compareTxResponse(want, got *types.SuiTransactionBlockResponse, options typ
 		}
 	}
 	if options.ShowBalanceChanges {
-		wantKeys, gotKeys := balanceChangeKeys(want.BalanceChanges), balanceChangeKeys(got.BalanceChanges)
+		gotChanges := got.BalanceChanges
+		if options.ShowEffects {
+			gotChanges = withoutAddressBalanceMovements(gotChanges, got.Effects)
+		}
+		wantKeys, gotKeys := balanceChangeKeys(want.BalanceChanges), balanceChangeKeys(gotChanges)
 		if fmt.Sprint(wantKeys) != fmt.Sprint(gotKeys) {
 			return fmt.Errorf("%s: balanceChanges: v1 %v, v2 %v", want.Digest, wantKeys, gotKeys)
 		}
@@ -509,6 +566,46 @@ func TestParityRawTransaction(t *testing.T) {
 	require.NotNil(t, gotPTB)
 	require.Len(t, gotPTB.Inputs, len(wantPTB.Inputs), "PTB input count")
 	require.Len(t, gotPTB.Commands, len(wantPTB.Commands), "PTB command count")
+}
+
+// objectChangeKeys renders object changes as canonical sorted JSON strings so
+// the two backends can be compared order-insensitively (v1 groups mutations
+// before creations, v2 keeps the effects' object-id order).
+func objectChangeKeys(t *testing.T, changes []lib.TagJson[types.ObjectChange]) []string {
+	t.Helper()
+	keys := make([]string, 0, len(changes))
+	for _, change := range changes {
+		encoded, err := json.Marshal(change.Data)
+		require.NoError(t, err)
+		keys = append(keys, string(encoded))
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// TestParityObjectChanges compares ShowObjectChanges across every transaction
+// of the fixture checkpoint, covering user and system transactions alike.
+func TestParityObjectChanges(t *testing.T) {
+	env, ctx := parity(t), liveCtx(t)
+	options := types.SuiTransactionBlockResponseOptions{ShowObjectChanges: true}
+	fromV1, err := env.v1.MultiGetTransactionBlocks(ctx, env.txDigests, options)
+	require.NoError(t, err)
+	fromV2, err := env.v2.MultiGetTransactionBlocks(ctx, env.txDigests, options)
+	require.NoError(t, err)
+	require.Len(t, fromV1, len(env.txDigests))
+	require.Len(t, fromV2, len(env.txDigests))
+
+	sawChanges := false
+	for i, digest := range env.txDigests {
+		require.Empty(t, fromV2[i].Errors, "%s: v2 reported conversion errors", digest)
+		require.Nil(t, fromV2[i].Effects, "%s: effects fetched for the derivation must not be echoed back", digest)
+		require.Equal(t,
+			objectChangeKeys(t, fromV1[i].ObjectChanges),
+			objectChangeKeys(t, fromV2[i].ObjectChanges),
+			"%s: objectChanges", digest)
+		sawChanges = sawChanges || len(fromV2[i].ObjectChanges) > 0
+	}
+	require.True(t, sawChanges, "fixture checkpoint should have at least one object change")
 }
 
 func TestParityMultiGetTransactionBlocks(t *testing.T) {

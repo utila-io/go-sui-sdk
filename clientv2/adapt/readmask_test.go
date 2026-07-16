@@ -122,9 +122,18 @@ func TestResponseReadMaskPaths(t *testing.T) {
 			want:    append(append([]string{}, always...), "balance_changes"),
 		},
 		{
-			name:    "show object changes has no gRPC equivalent and is ignored",
+			name:    "show object changes fetches the transaction bcs and effects",
 			options: types.SuiTransactionBlockResponseOptions{ShowObjectChanges: true},
-			want:    always,
+			want:    append(append([]string{}, always...), "transaction.bcs", "effects"),
+		},
+		{
+			name: "show object changes with input and effects adds nothing",
+			options: types.SuiTransactionBlockResponseOptions{
+				ShowInput:         true,
+				ShowEffects:       true,
+				ShowObjectChanges: true,
+			},
+			want: append(append([]string{}, always...), "transaction.bcs", "signatures", "effects"),
 		},
 		{
 			name: "all options",

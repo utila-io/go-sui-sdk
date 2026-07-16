@@ -156,7 +156,7 @@ func TestResponse(t *testing.T) {
 			},
 			Checkpoint: proto.Uint64(555),
 			Timestamp:  timestamppb.New(time.UnixMilli(1700000000456)),
-		}, types.SuiTransactionBlockResponseOptions{ShowInput: true, ShowRawInput: true})
+		}, types.SuiTransactionBlockResponseOptions{ShowInput: true, ShowRawInput: true, ShowEffects: true})
 		require.Equal(t, txDigest, got.Digest)
 		require.Equal(t, RawSenderSignedData(txData, []*pb.UserSignature{signature}), got.RawTransaction)
 		require.NotNil(t, got.Transaction)
