@@ -76,8 +76,10 @@ func (c *Client) Close() error {
 	return c.ownedConn.Close()
 }
 
-// parseEndpoint strips an optional http/https scheme; https or port 443 mean
-// TLS, http or any other explicit port plaintext, a bare host :443 with TLS.
+// parseEndpoint strips an optional http/https scheme. https means TLS and
+// http plaintext on any port; without a scheme, TLS is used unless the host
+// is loopback (providers serve TLS on non-443 ports too — use an explicit
+// http:// for a plaintext node).
 func parseEndpoint(endpoint string) (target string, secure bool, err error) {
 	scheme := ""
 	if i := strings.Index(endpoint, "://"); i >= 0 {
@@ -88,7 +90,7 @@ func parseEndpoint(endpoint string) (target string, secure bool, err error) {
 	if endpoint == "" {
 		return "", false, errors.New("empty gRPC endpoint")
 	}
-	_, port, splitErr := net.SplitHostPort(endpoint)
+	host, _, splitErr := net.SplitHostPort(endpoint)
 	hasPort := splitErr == nil
 
 	switch scheme {
@@ -106,8 +108,16 @@ func parseEndpoint(endpoint string) (target string, secure bool, err error) {
 		if !hasPort {
 			return endpoint + ":443", true, nil
 		}
-		return endpoint, port == "443", nil
+		return endpoint, !isLoopback(host), nil
 	default:
 		return "", false, fmt.Errorf("unsupported endpoint scheme %q", scheme)
 	}
+}
+
+func isLoopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
