@@ -9,21 +9,17 @@ import (
 	"github.com/utila-io/go-sui-sdk/types"
 )
 
-// JSON-RPC marker digests for objects with no output state, from Sui's
-// crates/sui-types/src/digests.rs: ObjectDigest::OBJECT_DIGEST_DELETED is
-// [99; 32] and ObjectDigest::OBJECT_DIGEST_WRAPPED is [88; 32], base58-encoded.
-// gRPC leaves output_digest unset for these objects, so the markers are
-// substituted to match the JSON-RPC effects shape.
+// JSON-RPC marker digests for deleted ([99; 32]) and wrapped ([88; 32])
+// objects, base58-encoded (Sui's digests.rs). gRPC leaves output_digest unset
+// for these, so the markers are substituted to match the JSON-RPC shape.
 const (
 	objectDigestDeleted = "7gyGAp71YXQRoxmFBaHxofQXAipvgHyBKPyxmdSJxyvz"
 	objectDigestWrapped = "6ws1bVyu3F8wGy1fPHhrc2v8UyWiGbRAAuek8SwikKPD"
 )
 
-// Effects converts proto TransactionEffects into the JSON-RPC effects shape,
-// including SIP-58 accumulator events derived from ACCUMULATOR_WRITE entries
-// in changed_objects. Returns nil when fx is nil (effects not requested).
-// Entries whose owner cannot be parsed are dropped and reported in the
-// returned error slice; everything else is still converted.
+// Effects converts proto TransactionEffects into the JSON-RPC effects shape;
+// nil fx (effects not requested) yields nil. Unparseable entries are dropped
+// and reported in the error slice; everything else is still converted.
 func Effects(fx *pb.TransactionEffects) (*types.SuiTransactionBlockEffects, []error) {
 	if fx == nil {
 		return nil, nil
@@ -59,8 +55,7 @@ func Effects(fx *pb.TransactionEffects) (*types.SuiTransactionBlockEffects, []er
 }
 
 // mapChangedObject sorts one changed_objects entry into the JSON-RPC
-// created/mutated/unwrapped/deleted/wrapped buckets (or accumulatorEvents),
-// mirroring how Sui derives ObjectChange categories from effects V2.
+// created/mutated/unwrapped/deleted/wrapped buckets (or accumulatorEvents).
 func mapChangedObject(v1 *types.SuiTransactionBlockEffectsV1, changed *pb.ChangedObject, lamportVersion uint64) error {
 	written := changed.GetOutputState() == pb.ChangedObject_OUTPUT_OBJECT_STATE_OBJECT_WRITE ||
 		changed.GetOutputState() == pb.ChangedObject_OUTPUT_OBJECT_STATE_PACKAGE_WRITE
@@ -156,10 +151,9 @@ func ownedObjectRef(changed *pb.ChangedObject) (types.OwnedObjectRef, error) {
 	}, nil
 }
 
-// markerObjectRef builds the object ref for a deleted or wrapped object.
-// Its output_digest and output_version are unset on the wire, so the JSON-RPC
-// marker digest and the transaction's lamport version are substituted,
-// matching how JSON-RPC renders refs of objects with no output state.
+// markerObjectRef builds the ref for a deleted or wrapped object, whose
+// output digest/version are unset on the wire: the JSON-RPC marker digest and
+// the transaction's lamport version are substituted.
 func markerObjectRef(changed *pb.ChangedObject, lamportVersion uint64, markerDigest string) types.SuiObjectRef {
 	return types.SuiObjectRef{
 		ObjectId: changed.GetObjectId(),

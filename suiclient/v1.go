@@ -10,18 +10,15 @@ import (
 	"github.com/utila-io/go-sui-sdk/types"
 )
 
-// jsonrpcBackend adapts *client.Client to the SuiClient interface. Most
-// methods delegate to the typed v1 methods; the ones whose v1 signatures
-// diverge from the interface (string coin cursor, checkpoint helpers) go
-// through CallContext directly so the client package stays untouched.
+// jsonrpcBackend adapts *client.Client to SuiClient. Methods whose v1
+// signatures diverge from the interface go through CallContext directly.
 type jsonrpcBackend struct {
 	c *client.Client
 }
 
 const (
-	// multiGetTransactionsChunkSize caps the number of digests per
-	// sui_multiGetTransactionBlocks call (the JSON-RPC multi-get limit),
-	// mirroring clientv2's batchTransactionsChunkSize.
+	// multiGetTransactionsChunkSize caps digests per
+	// sui_multiGetTransactionBlocks call (the JSON-RPC multi-get limit).
 	multiGetTransactionsChunkSize = 50
 	// checkpointsPageLimit is the maximum page size sui_getCheckpoints
 	// accepts (the JSON-RPC query result limit).
@@ -40,10 +37,9 @@ func (b *jsonrpcBackend) GetAllBalances(ctx context.Context, owner sui_types.Sui
 	return b.c.GetAllBalances(ctx, owner)
 }
 
-// GetCoins calls suix_getCoins through CallContext instead of the typed v1
-// method: types.CoinPage declares its cursor as an ObjectID, but the real
-// wire cursor is an opaque base64 string. A nil coinType marshals to null,
-// which the node defaults to 0x2::sui::SUI.
+// GetCoins goes through CallContext instead of the typed v1 method:
+// types.CoinPage declares its cursor as an ObjectID, but the real wire cursor
+// is an opaque base64 string.
 func (b *jsonrpcBackend) GetCoins(
 	ctx context.Context,
 	owner sui_types.SuiAddress,
@@ -150,8 +146,7 @@ func (b *jsonrpcBackend) GetCheckpoints(ctx context.Context, startSeqNum uint64,
 		return nil, nil
 	}
 	// The sui_getCheckpoints cursor is exclusive: nil starts from genesis,
-	// otherwise pass the checkpoint just before startSeqNum. Subsequent pages
-	// resume from the returned nextCursor.
+	// otherwise pass the checkpoint just before startSeqNum.
 	var cursor any
 	if startSeqNum > 0 {
 		cursor = fmt.Sprint(startSeqNum - 1)
@@ -185,9 +180,9 @@ func (b *jsonrpcBackend) GetCheckpointTransactions(
 	seqNum uint64,
 	options types.SuiTransactionBlockResponseOptions,
 ) ([]*types.SuiTransactionBlockResponse, error) {
-	// suix_queryTransactionBlocks takes the Checkpoint filter as a BigInt
-	// encoded as a decimal string, so the query is built here instead of with
-	// types.SuiTransactionBlockResponseQuery (whose filter field is numeric).
+	// The Checkpoint filter must be a BigInt encoded as a decimal string, so
+	// the query is built as a map (types.SuiTransactionBlockResponseQuery's
+	// filter field is numeric).
 	query := map[string]any{
 		"filter":  map[string]string{"Checkpoint": fmt.Sprint(seqNum)},
 		"options": options,
@@ -217,8 +212,7 @@ func (b *jsonrpcBackend) GetCheckpointTransactions(
 	}
 }
 
-// Close implements io.Closer; the JSON-RPC backend holds no persistent
-// connection, so there is nothing to release.
+// Close is a no-op: the JSON-RPC backend holds no persistent connection.
 func (b *jsonrpcBackend) Close() error {
 	return nil
 }

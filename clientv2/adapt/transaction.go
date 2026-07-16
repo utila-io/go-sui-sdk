@@ -13,14 +13,10 @@ import (
 	"github.com/utila-io/go-sui-sdk/types"
 )
 
-// ResponseReadMaskPaths maps SuiTransactionBlockResponseOptions to
-// ExecutedTransaction read mask paths. digest, checkpoint and timestamp are
-// always fetched since JSON-RPC always returns them. ShowObjectChanges has no
-// gRPC equivalent (object changes require indexing data beyond effects) and is
-// ignored; the created/mutated/deleted breakdown is available via ShowEffects.
-// ShowInput and ShowRawInput both need the BCS TransactionData plus the user
-// signatures: the parsed transaction surfaces them as txSignatures and the raw
-// SenderSignedData envelope embeds them.
+// ResponseReadMaskPaths maps response options to ExecutedTransaction read mask
+// paths. digest, checkpoint and timestamp are always fetched (JSON-RPC always
+// returns them). ShowObjectChanges has no gRPC equivalent and is ignored; the
+// created/mutated/deleted breakdown is available via ShowEffects.
 func ResponseReadMaskPaths(options types.SuiTransactionBlockResponseOptions) []string {
 	paths := []string{"digest", "checkpoint", "timestamp"}
 	if options.ShowInput || options.ShowRawInput {
@@ -49,13 +45,9 @@ func PrefixPaths(prefix string, paths []string) []string {
 }
 
 // Response converts an ExecutedTransaction into the JSON-RPC
-// sui_getTransactionBlock response shape. Fields absent from the proto (not
-// covered by the request's read mask) stay unset, mirroring how JSON-RPC omits
-// fields not requested via options. Like JSON-RPC, ShowRawInput yields the BCS
-// SenderSignedData bytes (synthesized from the transaction and its signatures)
-// and ShowInput the parsed transaction; a transaction that cannot be decoded
-// (e.g. a system transaction kind newer than the SDK's BCS types) reports the
-// problem via the response's Errors field instead of failing the call.
+// sui_getTransactionBlock response shape. Fields not covered by the request's
+// read mask stay silently unset. A transaction that cannot be BCS-decoded
+// reports the problem via the response's Errors field instead of failing.
 func Response(tx *pb.ExecutedTransaction, options types.SuiTransactionBlockResponseOptions) *types.SuiTransactionBlockResponse {
 	if tx == nil {
 		return nil
@@ -98,10 +90,9 @@ func Response(tx *pb.ExecutedTransaction, options types.SuiTransactionBlockRespo
 	return response
 }
 
-// Events converts proto TransactionEvents into the JSON-RPC event list.
-// Event sequence numbers are the event's index within the transaction.
-// Events that cannot be parsed are dropped and reported in the returned error
-// slice; the rest are still converted.
+// Events converts proto TransactionEvents into the JSON-RPC event list; event
+// sequence numbers are the event's index within the transaction. Unparseable
+// events are dropped and reported in the error slice.
 func Events(txDigest string, events *pb.TransactionEvents) ([]types.SuiEvent, []error) {
 	if events == nil {
 		return nil, nil
@@ -136,9 +127,7 @@ func Events(txDigest string, events *pb.TransactionEvents) ([]types.SuiEvent, []
 }
 
 // BalanceChanges converts proto balance changes into the JSON-RPC shape.
-// Owner addresses stay long form; coin types are normalized to short form.
-// Changes whose owner address cannot be parsed are dropped and reported in
-// the returned error slice; the rest are still converted.
+// Changes with an unparseable owner are dropped and reported in the error slice.
 func BalanceChanges(changes []*pb.BalanceChange) ([]types.BalanceChange, []error) {
 	if len(changes) == 0 {
 		return nil, nil
@@ -163,10 +152,7 @@ func BalanceChanges(changes []*pb.BalanceChange) ([]types.BalanceChange, []error
 }
 
 // ExecutionResults converts SimulateTransaction per-command outputs into the
-// JSON-RPC dev-inspect results shape: per command, the mutable reference
-// outputs as (argument, bytes, type) triples and the return values as
-// (bytes, type) pairs. Bytes are []byte (rendered as base64 by
-// encoding/json) and types are normalized to short form.
+// JSON-RPC dev-inspect results shape. Bytes are []byte (base64 in JSON).
 func ExecutionResults(outputs []*pb.CommandResult) []types.ExecutionResultType {
 	if len(outputs) == 0 {
 		return nil
@@ -211,8 +197,7 @@ func commandArgument(arg *pb.Argument) any {
 }
 
 // SignatureBytes extracts the raw serialized signature (flag || sig || pubkey)
-// from the values accepted by ExecuteTransactionBlock: sui_types.Signature,
-// base64 strings, lib.Base64Data or raw bytes.
+// from the value forms accepted by ExecuteTransactionBlock.
 func SignatureBytes(signature any) ([]byte, error) {
 	switch sig := signature.(type) {
 	case sui_types.Signature:
@@ -248,11 +233,9 @@ func signatureData(sig sui_types.Signature) ([]byte, error) {
 const devInspectGasBudget = uint64(50_000_000_000)
 
 // DevInspectTransactionData wraps BCS TransactionKind bytes into a full BCS
-// TransactionData V1 by concatenation, without decoding the kind. Layout
-// (sui_types.TransactionData/TransactionDataV1/GasData field order):
-// V1 enum variant, kind, sender, gas data (empty payment vector, owner=sender,
-// price, budget) and a None expiration. The node accepts this with checks
-// disabled even though no gas coins are supplied.
+// TransactionData V1 by concatenation, without decoding the kind: V1 variant,
+// kind, sender, gas data (empty payment, owner=sender, price, budget), None
+// expiration. The node accepts the empty gas payment with checks disabled.
 func DevInspectTransactionData(sender sui_types.SuiAddress, kindBytes []byte, gasPrice uint64) []byte {
 	data := make([]byte, 0, len(kindBytes)+2*len(sender)+19)
 	data = append(data, 0x00) // TransactionData enum: V1

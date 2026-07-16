@@ -15,9 +15,8 @@ import (
 	"github.com/utila-io/go-sui-sdk/types"
 )
 
-// GetObject returns the latest version of the object, shaped per options.
-// A missing object is reported inside the response (Error: notExists), not as
-// a call error, matching JSON-RPC.
+// GetObject returns the latest version of the object, shaped per options. A
+// missing object is a notExists response, not a call error, like JSON-RPC.
 func (c *Client) GetObject(
 	ctx context.Context,
 	objID sui_types.ObjectID,

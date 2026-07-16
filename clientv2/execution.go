@@ -18,20 +18,17 @@ import (
 // ExecuteTransaction, whose mask is ExecutedTransaction-relative).
 const simulateReadMaskPrefix = "transaction."
 
-// simulateOptions is what simulate fetches for every simulation: effects,
-// events and balance changes (transaction input is what the caller supplied,
-// so there is nothing to echo back).
+// simulateOptions is what simulate fetches for every simulation; the input is
+// what the caller supplied, so it is never echoed back.
 var simulateOptions = types.SuiTransactionBlockResponseOptions{
 	ShowEffects:        true,
 	ShowEvents:         true,
 	ShowBalanceChanges: true,
 }
 
-// ExecuteTransactionBlock submits a signed transaction. txBytes is the BCS
-// serialization of TransactionData; signatures are sui_types.Signature values
-// (or base64 strings of serialized signatures). requestType is ignored: gRPC
-// execution always waits for effects, which is at least as strong as
-// WaitForEffectsCert.
+// ExecuteTransactionBlock submits a signed transaction. requestType is
+// ignored: gRPC execution always waits for effects, which is at least as
+// strong as WaitForEffectsCert.
 func (c *Client) ExecuteTransactionBlock(
 	ctx context.Context,
 	txBytes lib.Base64Data,
@@ -63,8 +60,7 @@ func (c *Client) ExecuteTransactionBlock(
 }
 
 // DryRunTransaction simulates a full BCS TransactionData with checks enabled.
-// The Input field of the response is not reconstructed from the transaction
-// bytes (JSON-RPC-only shape) and stays zero.
+// The response's Input field is not reconstructed and stays zero.
 func (c *Client) DryRunTransaction(ctx context.Context, txBytes lib.Base64Data) (*types.DryRunTransactionBlockResponse, error) {
 	resp, err := c.simulate(ctx, txBytes.Data(), pb.SimulateTransactionRequest_ENABLED)
 	if err != nil {
@@ -81,11 +77,9 @@ func (c *Client) DryRunTransaction(ctx context.Context, txBytes lib.Base64Data) 
 	return out, nil
 }
 
-// DevInspectTransactionBlock simulates a bare TransactionKind (BCS bytes)
-// without requiring gas payment or signatures: the kind is wrapped into a
-// TransactionData with an empty gas payment and simulated with checks
-// disabled. epoch is ignored (gRPC simulation always runs at the current
-// epoch); a nil gasPrice defaults to the current reference gas price.
+// DevInspectTransactionBlock simulates a bare TransactionKind (BCS bytes) with
+// checks disabled. epoch is ignored (gRPC always simulates at the current
+// epoch); a nil gasPrice defaults to the reference gas price.
 func (c *Client) DevInspectTransactionBlock(
 	ctx context.Context,
 	sender sui_types.SuiAddress,
@@ -124,11 +118,9 @@ func (c *Client) DevInspectTransactionBlock(
 	return out, nil
 }
 
-// simulate runs SimulateTransaction on raw BCS TransactionData bytes and
-// returns the response with the simulated transaction's effects, events and
-// balance changes populated. extraPaths are additional response-relative read
-// mask paths (e.g. "command_outputs"); the transaction paths themselves are
-// rebased onto the response-relative mask here.
+// simulate runs SimulateTransaction on raw BCS TransactionData bytes.
+// extraPaths are additional response-relative read mask paths (e.g.
+// "command_outputs").
 func (c *Client) simulate(
 	ctx context.Context,
 	txData []byte,

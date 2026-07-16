@@ -14,9 +14,8 @@ var CoinReadMaskPaths = []string{
 	"object_id", "version", "digest", "object_type", "balance", "previous_transaction",
 }
 
-// Coin converts a proto Coin<T> object (from ListOwnedObjects with a coin
-// object_type filter) into the JSON-RPC suix_getCoins entry shape.
-// LockedUntilEpoch has no gRPC source and is left nil.
+// Coin converts a proto Coin<T> object into the JSON-RPC suix_getCoins entry
+// shape. LockedUntilEpoch has no gRPC source and is left nil.
 func Coin(obj *pb.Object) (types.Coin, error) {
 	coinObjectID, err := parseAddress(obj.GetObjectId())
 	if err != nil {

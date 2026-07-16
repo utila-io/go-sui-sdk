@@ -39,20 +39,16 @@ func (c *Client) GetCheckpoint(ctx context.Context, seqNum uint64) (*types.Check
 // issued by GetCheckpoints.
 const checkpointFetchConcurrency = 8
 
-// GetCheckpoints returns up to limit sequential checkpoints starting at
-// startSeqNum (inclusive), in ascending order. Like the JSON-RPC page, it ends
-// early at the tip of the chain: checkpoints past the last known one are
-// simply not included. A limit <= 0 yields no checkpoints, like the v1
-// backend.
+// GetCheckpoints returns up to limit sequential checkpoints from startSeqNum
+// (inclusive), ascending, ending early at the tip of the chain. A limit <= 0
+// yields no checkpoints.
 func (c *Client) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit int) ([]*types.Checkpoint, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
-	// The range is fetched with bounded concurrency. firstMissing tracks the
-	// lowest offset that came back NotFound so later offsets can skip their
-	// fetch: checkpoints are contiguous, so everything past the first missing
-	// one is missing too. Offsets below firstMissing are never skipped, which
-	// keeps the collected prefix hole-free.
+	// Fetch with bounded concurrency. firstMissing tracks the lowest NotFound
+	// offset so later offsets can skip (checkpoints are contiguous); offsets
+	// below it are never skipped, keeping the collected prefix hole-free.
 	var (
 		checkpoints  = make([]*pb.Checkpoint, limit)
 		errs         = make([]error, limit)
@@ -96,9 +92,7 @@ func (c *Client) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit i
 }
 
 // GetCheckpointTransactions returns every transaction in the checkpoint,
-// shaped per options and in checkpoint order. It fetches the digest list from
-// the checkpoint and hydrates it via BatchGetTransactions, replacing JSON-RPC
-// queryTransactionBlocks with a Checkpoint filter.
+// shaped per options and in checkpoint order.
 func (c *Client) GetCheckpointTransactions(
 	ctx context.Context,
 	seqNum uint64,
@@ -119,8 +113,7 @@ func (c *Client) GetCheckpointTransactions(
 	return responses, nil
 }
 
-// getCheckpoint fetches one checkpoint by sequence number with the given
-// read mask.
+// getCheckpoint fetches one checkpoint with the given read mask.
 func (c *Client) getCheckpoint(ctx context.Context, seqNum uint64, readMaskPaths []string) (*pb.Checkpoint, error) {
 	resp, err := c.ledger.GetCheckpoint(ctx, &pb.GetCheckpointRequest{
 		CheckpointId: &pb.GetCheckpointRequest_SequenceNumber{SequenceNumber: seqNum},

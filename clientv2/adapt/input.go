@@ -21,10 +21,9 @@ import (
 // (scope=TransactionData, version=V0, app=Sui).
 var senderSignedDataPrefix = []byte{1, 0, 0, 0}
 
-// RawSenderSignedData wraps bare BCS TransactionData bytes and the
-// transaction's user signatures into the BCS SenderSignedData envelope that
-// JSON-RPC returns under showRawInput: the intent-message prefix, the
-// TransactionData, then the signatures as a BCS vector of byte vectors.
+// RawSenderSignedData wraps bare BCS TransactionData bytes and the user
+// signatures into the BCS SenderSignedData envelope JSON-RPC returns under
+// showRawInput: prefix, TransactionData, signatures as a vector of byte vectors.
 func RawSenderSignedData(txData []byte, signatures []*pb.UserSignature) []byte {
 	out := make([]byte, 0, len(senderSignedDataPrefix)+len(txData)+1+len(signatures)*(2+64))
 	out = append(out, senderSignedDataPrefix...)
@@ -48,15 +47,9 @@ func appendULEB128(buf []byte, v uint64) []byte {
 }
 
 // TransactionBlock BCS-decodes bare TransactionData bytes into the parsed
-// JSON-RPC transaction shape returned under showInput. Signatures are the
-// transaction's user signatures, surfaced as base64 strings.
-//
-// The rendering is best-effort where JSON-RPC needs data beyond the
-// transaction itself: pure input value types are only resolved from built-in
-// command usage (TransferObjects recipients are addresses, SplitCoins amounts
-// are u64), not from Move call signatures, so pure inputs JSON-RPC renders
-// with a resolved valueType may render here as raw bytes with a null
-// valueType, exactly like JSON-RPC renders unresolvable pures.
+// JSON-RPC showInput shape. Pure input value types are only inferred from
+// built-in command usage (see pureValueTypes); unresolved pures render as raw
+// bytes with a null valueType, like JSON-RPC's own unresolvable pures.
 func TransactionBlock(txData []byte, signatures []*pb.UserSignature) (*types.SuiTransactionBlock, error) {
 	var data sui_types.TransactionData
 	if _, err := bcs.Unmarshal(txData, &data); err != nil {
@@ -99,8 +92,7 @@ func TransactionBlock(txData []byte, signatures []*pb.UserSignature) (*types.Sui
 }
 
 // transactionBlockKind maps a decoded TransactionKind to the JSON-RPC kind.
-// Genesis is not mapped (its object list requires decoding full genesis
-// objects, and it only ever appears in checkpoint 0), leaving the kind zero.
+// Genesis is not mapped (only ever appears in checkpoint 0), leaving it zero.
 func transactionBlockKind(kind sui_types.TransactionKind) types.SuiTransactionBlockKind {
 	out := types.TransactionBlockKind{}
 	switch {
@@ -141,10 +133,9 @@ func programmableTransactionBlock(pt *sui_types.ProgrammableTransaction) *types.
 	return block
 }
 
-// pureValueTypes infers pure input value types from how the inputs are used,
-// mirroring JSON-RPC's resolution for built-in commands: TransferObjects
-// recipients are addresses and SplitCoins amounts are u64. MoveCall argument
-// types would need the on-chain function signatures and are not resolved.
+// pureValueTypes infers pure input value types from built-in command usage:
+// TransferObjects recipients are addresses, SplitCoins amounts are u64.
+// MoveCall types would need on-chain function signatures and are not resolved.
 func pureValueTypes(pt *sui_types.ProgrammableTransaction) map[int]string {
 	valueTypes := make(map[int]string)
 	for _, command := range pt.Commands {
@@ -194,9 +185,8 @@ func callArgJSON(arg sui_types.CallArg, valueType string) map[string]interface{}
 	}
 }
 
-// pureJSON renders a pure input like JSON-RPC's SuiPureValue: a typed value
-// when the type was inferred, otherwise a null valueType with the raw bytes as
-// a JSON number array (JSON-RPC's own fallback for unresolvable pures).
+// pureJSON renders a pure input like JSON-RPC's SuiPureValue: typed when
+// inferred, otherwise a null valueType with the raw bytes as a number array.
 func pureJSON(pureBytes []byte, valueType string) map[string]interface{} {
 	out := map[string]interface{}{"type": "pure"}
 	switch {
@@ -219,9 +209,8 @@ func pureJSON(pureBytes []byte, valueType string) map[string]interface{} {
 	return out
 }
 
-// commandJSON renders one PTB command like JSON-RPC's SuiCommand: an
-// externally tagged map whose payload mirrors the Rust enum layout (structs
-// for MoveCall, positional arrays for the tuple variants).
+// commandJSON renders one PTB command like JSON-RPC's SuiCommand: externally
+// tagged, structs for MoveCall, positional arrays for the tuple variants.
 func commandJSON(command sui_types.Command) map[string]interface{} {
 	switch {
 	case command.MoveCall != nil:
