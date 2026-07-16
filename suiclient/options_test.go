@@ -80,6 +80,15 @@ func TestNewIsLazy(t *testing.T) {
 	}
 }
 
+// TestNewWithInsecure pins that plaintext vs TLS makes no difference at
+// construction time: both stay lazy against a closed port.
+func TestNewWithInsecure(t *testing.T) {
+	require.Equal(t, BackendGRPC, newAndClose(t, WithBackend(BackendGRPC), WithInsecure()))
+	require.Equal(t, BackendGRPC, newAndClose(t, WithBackend(BackendGRPC)))
+	// No effect on JSON-RPC.
+	require.Equal(t, BackendJSONRPC, newAndClose(t, WithInsecure()))
+}
+
 func TestNewWithGRPCConn(t *testing.T) {
 	conn, err := grpc.NewClient(unreachableEndpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)

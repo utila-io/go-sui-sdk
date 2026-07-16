@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"github.com/utila-io/go-sui-sdk/client"
 	"github.com/utila-io/go-sui-sdk/clientv2"
 )
@@ -47,6 +49,10 @@ func New(endpoint string, opts ...Option) (SuiClient, error) {
 			return clientv2.NewClientWithConn(cfg.grpcConn), nil
 		}
 		dialOpts := cfg.grpcDialOptions
+		if cfg.insecure {
+			// Prepended so caller transport credentials in dialOpts still win.
+			dialOpts = append([]grpc.DialOption{clientv2.WithInsecure()}, dialOpts...)
+		}
 		if cfg.authToken != "" {
 			dialOpts = append(dialOpts, clientv2.WithAuthToken(cfg.authToken))
 		}

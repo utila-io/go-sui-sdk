@@ -24,12 +24,17 @@ This SDK supports both behind one interface; select the backend with a flag:
 ```go
 import "github.com/utila-io/go-sui-sdk/suiclient"
 
-// Default: JSON-RPC (unchanged behavior)
-cli, err := suiclient.New(endpoint)
+// Default: JSON-RPC (unchanged behavior), endpoint is an https URL
+cli, err := suiclient.New("https://fullnode.mainnet.sui.io")
 
-// Opt into gRPC
-cli, err := suiclient.New(endpoint, suiclient.WithBackend(suiclient.BackendGRPC))
+// Opt into gRPC: endpoint is "grpc://host[:port]" or "host[:port]" (port
+// defaults to 443), always TLS — http:// and https:// are rejected
+cli, err := suiclient.New("fullnode.mainnet.sui.io:443", suiclient.WithBackend(suiclient.BackendGRPC))
 defer cli.Close()
+
+// Plaintext gRPC (local node, internal bridge) is an explicit opt-in
+cli, err := suiclient.New("localhost:9000",
+	suiclient.WithBackend(suiclient.BackendGRPC), suiclient.WithInsecure())
 
 bal, err := cli.GetBalance(ctx, owner, "") // same interface either way
 ```

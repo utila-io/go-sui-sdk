@@ -35,6 +35,7 @@ type config struct {
 	grpcDialOptions []grpc.DialOption
 	grpcConn        grpc.ClientConnInterface
 	authToken       string
+	insecure        bool
 }
 
 // Option configures New.
@@ -72,6 +73,16 @@ func WithGRPCDialOptions(opts ...grpc.DialOption) Option {
 func WithGRPCConn(conn grpc.ClientConnInterface) Option {
 	return func(c *config) {
 		c.grpcConn = conn
+	}
+}
+
+// WithInsecure makes the gRPC backend dial plaintext instead of the TLS
+// default (e.g. an internal bridge on host:port). No effect on JSON-RPC or on
+// a WithGRPCConn connection; transport credentials passed via
+// WithGRPCDialOptions still win.
+func WithInsecure() Option {
+	return func(c *config) {
+		c.insecure = true
 	}
 }
 

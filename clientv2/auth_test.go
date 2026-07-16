@@ -38,7 +38,7 @@ func TestWithAuthTokenSendsHeader(t *testing.T) {
 	go server.Serve(lis)
 	defer server.Stop()
 
-	c, err := NewClient("http://"+lis.Addr().String(), WithAuthToken("sekret"))
+	c, err := NewClient(lis.Addr().String(), WithInsecure(), WithAuthToken("sekret"))
 	require.NoError(t, err)
 	defer c.Close()
 

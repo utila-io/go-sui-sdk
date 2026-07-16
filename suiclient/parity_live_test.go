@@ -8,7 +8,7 @@
 //	go test -tags live ./suiclient/ -run TestParity -v
 //
 // Endpoints (overridable via env):
-//   - SUI_PARITY_GRPC_ENDPOINT    (default https://fullnode.testnet.sui.io:443)
+//   - SUI_PARITY_GRPC_ENDPOINT    (default fullnode.testnet.sui.io:443)
 //   - SUI_PARITY_JSONRPC_ENDPOINT (default: fullnode.testnet.sui.io, falling
 //     back to public testnet JSON-RPC nodes — Mysten's fullnode has retired its
 //     JSON-RPC route and answers 404 there as of mid-2026)
@@ -65,7 +65,7 @@ import (
 )
 
 const (
-	defaultGRPCEndpoint = "https://fullnode.testnet.sui.io:443"
+	defaultGRPCEndpoint = "fullnode.testnet.sui.io:443"
 	// volatileRetries is how many times a pair of volatile reads is retried
 	// before the mismatch is reported as a failure.
 	volatileRetries = 3
