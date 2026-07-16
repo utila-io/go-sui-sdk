@@ -1,6 +1,10 @@
 package suiclient
 
 import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -165,4 +169,33 @@ func TestNewWithGRPCConnIgnoredOnJSONRPC(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, BackendJSONRPC, backendOf(t, c))
 	require.NoError(t, c.Close())
+}
+
+func TestNewWithAuthTokenJSONRPC(t *testing.T) {
+	t.Setenv(BackendEnvVar, "")
+	var gotToken string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotToken = r.Header.Get("x-token")
+		fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":"123"}`)
+	}))
+	defer srv.Close()
+
+	c, err := New(srv.URL, WithAuthToken("sekret"))
+	require.NoError(t, err)
+	defer c.Close()
+
+	seq, err := c.GetLatestCheckpointSequenceNumber(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "123", seq)
+	require.Equal(t, "sekret", gotToken)
+}
+
+func TestNewWithAuthTokenRejectsGRPCConn(t *testing.T) {
+	t.Setenv(BackendEnvVar, "")
+	conn, err := grpc.NewClient(unreachableEndpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer conn.Close()
+
+	_, err = New("", WithBackend(BackendGRPC), WithGRPCConn(conn), WithAuthToken("sekret"))
+	require.ErrorContains(t, err, "WithAuthToken")
 }

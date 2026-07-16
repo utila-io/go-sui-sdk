@@ -38,6 +38,9 @@ func New(endpoint string, opts ...Option) (SuiClient, error) {
 		if hc == nil {
 			hc = defaultHTTPClient()
 		}
+		if cfg.authToken != "" {
+			hc = withAuthHeader(hc, cfg.authToken)
+		}
 		c, err := client.DialWithClient(endpoint, hc)
 		if err != nil {
 			return nil, err
@@ -48,11 +51,18 @@ func New(endpoint string, opts ...Option) (SuiClient, error) {
 			if len(cfg.grpcDialOptions) > 0 {
 				return nil, fmt.Errorf("suiclient: WithGRPCConn and WithGRPCDialOptions are mutually exclusive")
 			}
+			if cfg.authToken != "" {
+				return nil, fmt.Errorf("suiclient: WithAuthToken cannot be combined with WithGRPCConn; attach credentials when dialing the connection")
+			}
 			return clientv2.NewClientWithConn(cfg.grpcConn), nil
+		}
+		dialOpts := cfg.grpcDialOptions
+		if cfg.authToken != "" {
+			dialOpts = append(dialOpts, clientv2.WithAuthToken(cfg.authToken))
 		}
 		// Not returned directly: that would wrap a typed-nil *clientv2.Client
 		// in a non-nil SuiClient interface on error.
-		c, err := clientv2.NewClient(endpoint, cfg.grpcDialOptions...)
+		c, err := clientv2.NewClient(endpoint, dialOpts...)
 		if err != nil {
 			return nil, err
 		}
@@ -75,6 +85,29 @@ func backendFromEnv() (backend Backend, ok bool, err error) {
 	default:
 		return 0, false, fmt.Errorf("suiclient: invalid %s value %q (want v1|jsonrpc|v2|grpc)", BackendEnvVar, v)
 	}
+}
+
+// withAuthHeader returns a shallow copy of hc whose transport adds the
+// x-token header; the caller's client is not mutated.
+func withAuthHeader(hc *http.Client, token string) *http.Client {
+	transport := hc.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	clone := *hc
+	clone.Transport = authTransport{next: transport, token: token}
+	return &clone
+}
+
+type authTransport struct {
+	next  http.RoundTripper
+	token string
+}
+
+func (t authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.Header.Set("x-token", t.token)
+	return t.next.RoundTrip(req)
 }
 
 // defaultHTTPClient mirrors client.Dial's http.Client so that New(endpoint)

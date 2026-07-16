@@ -34,6 +34,7 @@ type config struct {
 	httpClient      *http.Client
 	grpcDialOptions []grpc.DialOption
 	grpcConn        grpc.ClientConnInterface
+	authToken       string
 }
 
 // Option configures New.
@@ -71,5 +72,14 @@ func WithGRPCDialOptions(opts ...grpc.DialOption) Option {
 func WithGRPCConn(conn grpc.ClientConnInterface) Option {
 	return func(c *config) {
 		c.grpcConn = conn
+	}
+}
+
+// WithAuthToken sends token as an "x-token" header on every request, on both
+// backends. Cannot be combined with WithGRPCConn: attach credentials when
+// dialing the injected connection instead.
+func WithAuthToken(token string) Option {
+	return func(c *config) {
+		c.authToken = token
 	}
 }
