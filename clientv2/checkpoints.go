@@ -48,28 +48,17 @@ func (c *Client) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit i
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// firstMissing tracks the lowest NotFound offset so later offsets can skip
-	// (checkpoints are contiguous); offsets below it are never skipped, keeping
-	// the collected prefix hole-free. It only ever decreases.
 	var (
-		// Fixed length: each worker writes a distinct index, so no lock is
-		// needed (wg.Wait orders the final read). Pointers only, so a huge
-		// limit costs 8 bytes per entry.
-		checkpoints  = make([]*pb.Checkpoint, limit)
-		firstErr     atomic.Pointer[error]
+		checkpoints = make([]*pb.Checkpoint, limit)
+		firstErr    atomic.Pointer[error]
+		// firstMissing is the lowest NotFound offset; only ever decreases.
+		// Initialized to limit — the first-missing offset of a fully present
+		// range — so it always equals the collected hole-free prefix length.
 		firstMissing atomic.Int64
 		indices      = make(chan int)
 		wg           sync.WaitGroup
 	)
 	firstMissing.Store(int64(limit))
-
-	// The first hard error wins and cancels all remaining work; errors from
-	// RPCs aborted by that cancellation are dropped.
-	fail := func(err error) {
-		if firstErr.CompareAndSwap(nil, &err) {
-			cancel()
-		}
-	}
 
 	go func() {
 		defer close(indices)
@@ -84,6 +73,7 @@ func (c *Client) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit i
 			}
 		}
 	}()
+
 	for range min(limit, checkpointFetchConcurrency) {
 		wg.Go(func() {
 			for i := range indices {
@@ -101,7 +91,9 @@ func (c *Client) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit i
 						}
 					}
 				default:
-					fail(err)
+					if firstErr.CompareAndSwap(nil, &err) {
+						cancel()
+					}
 				}
 			}
 		})
