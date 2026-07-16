@@ -61,7 +61,7 @@ func NewClient(endpoint string, dialOpts ...grpc.DialOption) (*Client, error) {
 		// Future URL-credential support (Basic vs x-token mapping, pending the
 		// provider's auth scheme) plugs in here; until then failing loudly
 		// beats dialing with the credentials silently dropped.
-		return nil, fmt.Errorf("gRPC endpoint %s: URL credentials are not yet supported; pass credentials via WithAuthToken or gRPC dial options", target)
+		return nil, fmt.Errorf("gRPC endpoint %s: URL credentials are not yet supported; pass credentials via WithHeaders or gRPC dial options", target)
 	}
 	opts := append([]grpc.DialOption{
 		grpc.WithTransportCredentials(credentials.NewClientTLSFromCert(nil, "")),

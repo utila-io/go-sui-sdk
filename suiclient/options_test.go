@@ -122,29 +122,63 @@ func TestNewWithGRPCConnIgnoredOnJSONRPC(t *testing.T) {
 	require.NoError(t, c.Close())
 }
 
-func TestNewWithAuthTokenJSONRPC(t *testing.T) {
-	var gotToken string
+func TestNewWithHeaderJSONRPC(t *testing.T) {
+	var gotAuth, gotKey string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotToken = r.Header.Get("x-token")
+		gotAuth = r.Header.Get("Authorization")
+		gotKey = r.Header.Get("x-api-key")
 		fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":"123"}`)
 	}))
 	defer srv.Close()
 
-	c, err := New(srv.URL, WithAuthToken("sekret"))
+	c, err := New(srv.URL, WithHeader("Authorization", "Bearer sekret"), WithHeader("x-api-key", "k123"))
 	require.NoError(t, err)
 	defer c.Close()
 
 	seq, err := c.GetLatestCheckpointSequenceNumber(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, "123", seq)
-	require.Equal(t, "sekret", gotToken)
+	require.Equal(t, "Bearer sekret", gotAuth)
+	require.Equal(t, "k123", gotKey)
 }
 
-func TestNewWithAuthTokenRejectsGRPCConn(t *testing.T) {
+// Last write per key wins, case-insensitively.
+func TestNewWithHeaderOverride(t *testing.T) {
+	var gotToken []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotToken = r.Header.Values("X-Token")
+		fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":"123"}`)
+	}))
+	defer srv.Close()
+
+	c, err := New(srv.URL, WithHeader("X-Token", "old"), WithHeader("x-token", "new"))
+	require.NoError(t, err)
+	defer c.Close()
+
+	_, err = c.GetLatestCheckpointSequenceNumber(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []string{"new"}, gotToken)
+}
+
+func TestNewWithHeaderGRPCIsLazy(t *testing.T) {
+	require.Equal(t, BackendGRPC, newAndClose(t, WithBackend(BackendGRPC), WithHeader("x-api-key", "k123")))
+}
+
+func TestNewWithHeaderRejectsGRPCConn(t *testing.T) {
 	conn, err := grpc.NewClient(unreachableEndpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	defer conn.Close()
 
-	_, err = New("", WithBackend(BackendGRPC), WithGRPCConn(conn), WithAuthToken("sekret"))
-	require.ErrorContains(t, err, "WithAuthToken")
+	_, err = New("", WithBackend(BackendGRPC), WithGRPCConn(conn), WithHeader("x-api-key", "k123"))
+	require.ErrorContains(t, err, "WithHeader")
+}
+
+// Invalid keys error from New on both backends, not at first RPC.
+func TestNewWithHeaderInvalidKey(t *testing.T) {
+	for _, key := range []string{"", ":authority", "grpc-timeout"} {
+		for _, backend := range []Backend{BackendJSONRPC, BackendGRPC} {
+			_, err := New(unreachableEndpoint, WithBackend(backend), WithHeader(key, "v"))
+			require.Error(t, err, "key %q backend %s", key, backend)
+		}
+	}
 }

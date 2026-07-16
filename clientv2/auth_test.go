@@ -15,35 +15,53 @@ import (
 
 type captureLedgerServer struct {
 	pb.UnimplementedLedgerServiceServer
-	gotToken chan string
+	gotMD chan metadata.MD
 }
 
 func (s *captureLedgerServer) GetServiceInfo(ctx context.Context, _ *pb.GetServiceInfoRequest) (*pb.GetServiceInfoResponse, error) {
-	token := ""
-	if md, ok := metadata.FromIncomingContext(ctx); ok {
-		if v := md.Get("x-token"); len(v) > 0 {
-			token = v[0]
-		}
-	}
-	s.gotToken <- token
+	md, _ := metadata.FromIncomingContext(ctx)
+	s.gotMD <- md
 	return &pb.GetServiceInfoResponse{CheckpointHeight: proto.Uint64(42)}, nil
 }
 
-func TestWithAuthTokenSendsHeader(t *testing.T) {
+func TestWithHeadersSendsHeaders(t *testing.T) {
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	server := grpc.NewServer()
-	ledger := &captureLedgerServer{gotToken: make(chan string, 1)}
+	ledger := &captureLedgerServer{gotMD: make(chan metadata.MD, 1)}
 	pb.RegisterLedgerServiceServer(server, ledger)
 	go server.Serve(lis)
 	defer server.Stop()
 
-	c, err := NewClient(lis.Addr().String(), WithInsecure(), WithAuthToken("sekret"))
+	// "Authorization" also pins lowercase normalization: gRPC fails RPCs whose
+	// per-RPC credentials carry uppercase keys.
+	c, err := NewClient(lis.Addr().String(), WithInsecure(), WithHeaders(map[string]string{
+		"Authorization": "Bearer sekret",
+		"x-api-key":     "k123",
+	}))
 	require.NoError(t, err)
 	defer c.Close()
 
 	seq, err := c.GetLatestCheckpointSequenceNumber(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, "42", seq)
-	require.Equal(t, "sekret", <-ledger.gotToken)
+
+	md := <-ledger.gotMD
+	require.Equal(t, []string{"Bearer sekret"}, md.Get("authorization"))
+	require.Equal(t, []string{"k123"}, md.Get("x-api-key"))
+}
+
+func TestWithHeadersPanicsOnInvalidKey(t *testing.T) {
+	for _, key := range []string{"", ":authority", "grpc-timeout", "Grpc-Timeout"} {
+		require.Panics(t, func() { WithHeaders(map[string]string{key: "v"}) }, "key %q", key)
+	}
+}
+
+func TestValidateHeaderKey(t *testing.T) {
+	require.NoError(t, ValidateHeaderKey("x-api-key"))
+	require.NoError(t, ValidateHeaderKey("Authorization"))
+	require.Error(t, ValidateHeaderKey(""))
+	require.Error(t, ValidateHeaderKey(":path"))
+	require.Error(t, ValidateHeaderKey("grpc-encoding"))
+	require.Error(t, ValidateHeaderKey("GRPC-Encoding"))
 }

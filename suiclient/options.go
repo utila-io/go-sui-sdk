@@ -2,6 +2,7 @@ package suiclient
 
 import (
 	"net/http"
+	"strings"
 
 	"google.golang.org/grpc"
 )
@@ -31,7 +32,7 @@ type config struct {
 	httpClient      *http.Client
 	grpcDialOptions []grpc.DialOption
 	grpcConn        grpc.ClientConnInterface
-	authToken       string
+	headers         map[string]string
 	insecure        bool
 }
 
@@ -82,11 +83,16 @@ func WithInsecure() Option {
 	}
 }
 
-// WithAuthToken sends token as an "x-token" header on every request, on both
-// backends. Cannot be combined with WithGRPCConn: attach credentials when
-// dialing the injected connection instead.
-func WithAuthToken(token string) Option {
+// WithHeader sends key: value on every request, on both backends. Repeatable;
+// keys are case-insensitive and the last value per key wins. Keys that gRPC
+// reserves (empty, ":"-prefixed, "grpc-"-prefixed) make New error, on both
+// backends. Cannot be combined with WithGRPCConn: headers can't be attached to
+// an injected connection, attach them when dialing it instead.
+func WithHeader(key, value string) Option {
 	return func(c *config) {
-		c.authToken = token
+		if c.headers == nil {
+			c.headers = make(map[string]string)
+		}
+		c.headers[strings.ToLower(key)] = value
 	}
 }
