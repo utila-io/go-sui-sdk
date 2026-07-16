@@ -22,3 +22,9 @@ proto-update:
 	git -C $(SUI_APIS_DIR) fetch origin
 	git -C $(SUI_APIS_DIR) checkout $(SUI_APIS_REF)
 	$(MAKE) proto
+
+.PHONY: mocks
+
+# Regenerate gomock mocks (uses the go.mod tool dependency on mockgen).
+mocks:
+	./scripts/mockgen.sh
