@@ -97,7 +97,9 @@ func parseEndpoint(endpoint string) (target string, err error) {
 		return "", errors.New("empty gRPC endpoint")
 	}
 	if strings.ContainsAny(rest, "/?#") {
-		return "", fmt.Errorf("gRPC endpoint %q must be host:port; URL paths and parameters cannot be dialed (send headers via WithHeaders instead)", endpoint)
+		// The endpoint is deliberately not echoed: query parameters and paths
+		// may embed credentials, and this error ends up in logs.
+		return "", errors.New("gRPC endpoint must be host:port; URL paths and parameters cannot be dialed (send headers via WithHeaders instead)")
 	}
 	if _, _, splitErr := net.SplitHostPort(rest); splitErr != nil {
 		rest += ":443"
