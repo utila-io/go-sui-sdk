@@ -20,6 +20,11 @@ import (
 // connection via NewClientWithConn must apply it themselves when dialing.
 const MaxRecvMsgSize = 64 * 1024 * 1024
 
+var (
+	errEmptyEndpoint   = errors.New("empty gRPC endpoint")
+	errInvalidEndpoint = errors.New("gRPC endpoint must be host:port; URL paths and parameters cannot be dialed (send headers via WithHeaders instead)")
+)
+
 type Client struct {
 	// ownedConn is the connection dialed by NewClient; nil when the
 	// connection was injected via NewClientWithConn (caller-owned).
@@ -94,12 +99,10 @@ func parseEndpoint(endpoint string) (target string, err error) {
 	}
 	rest = strings.TrimSuffix(rest, "/")
 	if rest == "" {
-		return "", errors.New("empty gRPC endpoint")
+		return "", errEmptyEndpoint
 	}
 	if strings.ContainsAny(rest, "/?#") {
-		// The endpoint is deliberately not echoed: query parameters and paths
-		// may embed credentials, and this error ends up in logs.
-		return "", errors.New("gRPC endpoint must be host:port; URL paths and parameters cannot be dialed (send headers via WithHeaders instead)")
+		return "", errInvalidEndpoint
 	}
 	if _, _, splitErr := net.SplitHostPort(rest); splitErr != nil {
 		rest += ":443"
