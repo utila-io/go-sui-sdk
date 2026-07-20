@@ -15,6 +15,53 @@ go get github.com/coming-chat/go-sui/v2
 
 
 
+## Backends: JSON-RPC (v1) and gRPC (v2)
+
+Sui is retiring its public JSON-RPC endpoints in favor of the
+[gRPC API](https://docs.sui.io/concepts/data-access/grpc-overview) (`sui.rpc.v2`).
+This SDK supports both behind one interface; select the backend with a flag:
+
+```go
+import "github.com/utila-io/go-sui-sdk/suiclient"
+
+// Default: JSON-RPC (unchanged behavior), endpoint is an https URL
+cli, err := suiclient.New("https://fullnode.mainnet.sui.io")
+
+// Opt into gRPC: endpoint is "grpc://host[:port]" or "host[:port]" (port
+// defaults to 443), always TLS — http:// and https:// are rejected
+cli, err := suiclient.New("fullnode.mainnet.sui.io:443", suiclient.WithBackend(suiclient.BackendGRPC))
+defer cli.Close()
+
+// Plaintext gRPC (local node, internal bridge) is an explicit opt-in
+cli, err := suiclient.New("localhost:9000",
+	suiclient.WithBackend(suiclient.BackendGRPC), suiclient.WithInsecure())
+
+// Provider auth headers (works on both backends; repeatable)
+cli, err := suiclient.New(endpoint,
+	suiclient.WithBackend(suiclient.BackendGRPC), suiclient.WithHeader("x-token", token))
+
+bal, err := cli.GetBalance(ctx, owner, "") // same interface either way
+```
+
+The `suiclient.SuiClient` interface
+contains only methods both backends fully support: balances & coins (including
+SIP-58 address balances and `accumulatorEvents` on effects), objects,
+transaction reads/execution/simulation, and checkpoints.
+
+Not on the interface (JSON-RPC concrete `client.Client` only): the `unsafe_*`
+server-side transaction builders, faucet, staking/APY reads, and arbitrary
+`queryTransactionBlocks`/`queryEvents` filters — build transactions locally
+with `sui_types.ProgrammableTransactionBuilder` instead, and enumerate
+checkpoint transactions with `GetCheckpointTransactions`.
+
+The gRPC bindings are generated from the
+[MystenLabs/sui-apis](https://github.com/MystenLabs/sui-apis) protos, pinned
+via the `third_party/sui-apis` git submodule. The generated code is committed,
+so consumers installing via `go get` need nothing extra; the submodule is only
+needed to regenerate (`git submodule update --init`, then `make proto`, or
+`make proto-update` after bumping `SUI_APIS_REF` to move the pin). Note that
+grpc-go raises the module's minimum Go version to 1.26.
+
 ## Usage
 
 ### Account
