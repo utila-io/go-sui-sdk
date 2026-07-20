@@ -1,5 +1,9 @@
 version: v2
 
+# Do NOT enable `clean`. The output directory sui/rpc/v2 holds hand-written
+# *_convert.go / convert_*.go files alongside the generated *.pb.go files;
+# `buf generate --clean` (or a `clean: true` here) would delete them.
+
 managed:
   enabled: true
   override:
