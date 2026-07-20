@@ -13,6 +13,18 @@ SUI_APIS_DIR := third_party/sui-apis
 .PHONY: proto proto-update
 
 # Regenerate Go bindings from the submodule protos (requires buf).
+#
+# The output directory also holds HAND-WRITTEN files -- <proto>_convert.go
+# (extending the like-named .pb.go) and convert_*.go (standalone) -- which
+# implement the gRPC -> internal-types conversions. buf only ever writes
+# *.pb.go, so they survive regeneration. Never add `clean: true` to
+# buf.gen.yaml, never pass `buf generate --clean`, and never wipe the output
+# directory: all three would delete them.
+#
+# buf also never REMOVES a generated file. If upstream renames or drops a
+# .proto, this target writes the new .pb.go and leaves the old one behind,
+# which redeclares its types and breaks the build. Delete the orphaned
+# .pb.go by hand.
 proto:
 	git submodule update --init $(SUI_APIS_DIR)
 	cd $(PB_DIR) && buf generate ../../../$(SUI_APIS_DIR) --path ../../../$(SUI_APIS_DIR)/proto/sui
