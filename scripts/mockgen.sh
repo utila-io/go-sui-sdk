@@ -4,6 +4,7 @@ cd "$(dirname "$0")/.."
 
 # Add more source files here
 sources="
+suiclient/client.go
 clientv2/internal/pb/sui/rpc/v2/ledger_service_grpc.pb.go
 clientv2/internal/pb/sui/rpc/v2/state_service_grpc.pb.go
 clientv2/internal/pb/sui/rpc/v2/transaction_execution_service_grpc.pb.go
