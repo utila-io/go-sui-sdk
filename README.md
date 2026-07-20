@@ -36,6 +36,10 @@ defer cli.Close()
 cli, err := suiclient.New("localhost:9000",
 	suiclient.WithBackend(suiclient.BackendGRPC), suiclient.WithInsecure())
 
+// Provider auth headers (works on both backends; repeatable)
+cli, err := suiclient.New(endpoint,
+	suiclient.WithBackend(suiclient.BackendGRPC), suiclient.WithHeader("x-token", token))
+
 bal, err := cli.GetBalance(ctx, owner, "") // same interface either way
 ```
 
@@ -56,7 +60,7 @@ via the `third_party/sui-apis` git submodule. The generated code is committed,
 so consumers installing via `go get` need nothing extra; the submodule is only
 needed to regenerate (`git submodule update --init`, then `make proto`, or
 `make proto-update` after bumping `SUI_APIS_REF` to move the pin). Note that
-grpc-go raises the module's minimum Go version to 1.25.
+grpc-go raises the module's minimum Go version to 1.26.
 
 ## Usage
 
