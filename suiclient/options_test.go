@@ -49,7 +49,7 @@ func callerConn(t *testing.T) *grpc.ClientConn {
 	t.Helper()
 	conn, err := grpc.NewClient(unreachableEndpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
-	t.Cleanup(func() { conn.Close() })
+	t.Cleanup(func() { require.NoError(t, conn.Close()) })
 	return conn
 }
 
@@ -109,22 +109,6 @@ func TestNewBackendSelection(t *testing.T) {
 	}
 }
 
-func TestBackendString(t *testing.T) {
-	cases := []struct {
-		backend Backend
-		want    string
-	}{
-		{BackendJSONRPC, "jsonrpc"},
-		{BackendGRPC, "grpc"},
-		{Backend(42), "unknown"},
-	}
-	for _, c := range cases {
-		t.Run(c.want, func(t *testing.T) {
-			require.Equal(t, c.want, c.backend.String())
-		})
-	}
-}
-
 // TestNewErrors pins options that cannot be honored: New errors immediately
 // (not at first RPC) and returns a nil client.
 func TestNewErrors(t *testing.T) {
@@ -166,7 +150,7 @@ func TestNewErrors(t *testing.T) {
 				opts            func(t *testing.T) []Option
 				wantErrContains string
 			}{
-				name:     fmt.Sprintf("invalid header key %q on %s", key, backend),
+				name:     fmt.Sprintf("invalid header key %q on %d", key, backend),
 				endpoint: unreachableEndpoint,
 				opts: func(*testing.T) []Option {
 					return []Option{WithBackend(backend), WithHeader(key, "v")}
@@ -224,7 +208,8 @@ func TestNewWithHeaderJSONRPC(t *testing.T) {
 			var got http.Header
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				got = r.Header.Clone()
-				fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":"123"}`)
+				_, err := fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":"123"}`)
+				require.NoError(t, err)
 			}))
 			defer srv.Close()
 
@@ -234,7 +219,7 @@ func TestNewWithHeaderJSONRPC(t *testing.T) {
 			}
 			client, err := New(srv.URL, opts...)
 			require.NoError(t, err)
-			defer client.Close()
+			defer func() { require.NoError(t, client.Close()) }()
 
 			seq, err := client.GetLatestCheckpointSequenceNumber(context.Background())
 			require.NoError(t, err)

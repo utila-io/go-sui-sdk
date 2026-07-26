@@ -16,17 +16,6 @@ const (
 	BackendGRPC
 )
 
-func (b Backend) String() string {
-	switch b {
-	case BackendJSONRPC:
-		return "jsonrpc"
-	case BackendGRPC:
-		return "grpc"
-	default:
-		return "unknown"
-	}
-}
-
 type config struct {
 	backend         *Backend
 	httpClient      *http.Client
