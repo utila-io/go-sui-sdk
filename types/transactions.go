@@ -78,6 +78,35 @@ type SuiTransactionBlockEffectsV1 struct {
 	EventsDigest *sui_types.TransactionEventsDigest `json:"eventsDigest,omitempty"`
 	/** The set of transaction digests this transaction depends on */
 	Dependencies []sui_types.TransactionDigest `json:"dependencies,omitempty"`
+	/**
+	 * Balance changes to address-owned balances (SIP-58 Address Balances, not coin objects).
+	 * Absent from effects prior to the Address Balances rollout.
+	 */
+	AccumulatorEvents []AccumulatorEvent `json:"accumulatorEvents,omitempty"`
+}
+
+type AccumulatorOperation string
+
+const (
+	// AccumulatorOperationMerge represents funds deposited into an address balance (send_funds).
+	AccumulatorOperationMerge AccumulatorOperation = "merge"
+	// AccumulatorOperationSplit represents funds withdrawn from an address balance.
+	AccumulatorOperationSplit AccumulatorOperation = "split"
+)
+
+type AccumulatorEventValue struct {
+	Integer *uint64 `json:"integer,omitempty"`
+}
+
+// AccumulatorEvent is a balance change to an address-owned balance (not a coin object).
+// These appear in TransactionEffects when coin::send_funds() is used (Sui SIP-58 Address Balances).
+type AccumulatorEvent struct {
+	AccumulatorObj string               `json:"accumulatorObj"`
+	Address        string               `json:"address"`
+	Operation      AccumulatorOperation `json:"operation"`
+	// Ty is the full type string, e.g. "0x2::balance::Balance<0x2::sui::SUI>"
+	Ty    string                `json:"ty"`
+	Value AccumulatorEventValue `json:"value"`
 }
 
 type SuiTransactionBlockEffects struct {
@@ -309,6 +338,8 @@ type SuiTransactionBlockResponseOptions struct {
 	ShowObjectChanges bool `json:"showObjectChanges,omitempty"`
 	/* Whether to show coin balance changes. Default to be false. */
 	ShowBalanceChanges bool `json:"showBalanceChanges,omitempty"`
+	/* Whether to show raw transaction input data (BCS SenderSignedData). Default to be false. */
+	ShowRawInput bool `json:"showRawInput,omitempty"`
 }
 
 type SuiTransactionBlockResponseQuery struct {
