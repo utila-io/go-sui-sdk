@@ -223,7 +223,7 @@ func TestNewWithHeaderJSONRPC(t *testing.T) {
 
 			seq, err := client.GetLatestCheckpointSequenceNumber(context.Background())
 			require.NoError(t, err)
-			require.Equal(t, "123", seq)
+			require.Equal(t, uint64(123), seq)
 			for key, values := range c.want {
 				require.Equal(t, values, got.Values(key), "header %s", key)
 			}
