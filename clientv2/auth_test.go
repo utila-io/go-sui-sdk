@@ -45,7 +45,7 @@ func TestWithHeadersSendsHeaders(t *testing.T) {
 
 	seq, err := c.GetLatestCheckpointSequenceNumber(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, "42", seq)
+	require.Equal(t, uint64(42), seq)
 
 	md := <-ledger.gotMD
 	require.Equal(t, []string{"Bearer sekret"}, md.Get("authorization"))

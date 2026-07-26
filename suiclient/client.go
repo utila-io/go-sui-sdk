@@ -53,7 +53,7 @@ type SuiClient interface {
 
 	// Checkpoints
 
-	GetLatestCheckpointSequenceNumber(ctx context.Context) (string, error)
+	GetLatestCheckpointSequenceNumber(ctx context.Context) (uint64, error)
 	GetCheckpoint(ctx context.Context, seqNum uint64) (*types.Checkpoint, error)
 	// GetCheckpoints returns up to limit sequential checkpoints starting at
 	// startSeqNum (inclusive), in ascending order.

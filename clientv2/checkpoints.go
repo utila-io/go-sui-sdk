@@ -3,7 +3,6 @@ package clientv2
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"sync"
 	"sync/atomic"
 
@@ -16,13 +15,13 @@ import (
 )
 
 // GetLatestCheckpointSequenceNumber returns the height of the most recently
-// executed checkpoint as a decimal string.
-func (c *Client) GetLatestCheckpointSequenceNumber(ctx context.Context) (string, error) {
+// executed checkpoint.
+func (c *Client) GetLatestCheckpointSequenceNumber(ctx context.Context) (uint64, error) {
 	resp, err := c.ledger.GetServiceInfo(ctx, &pb.GetServiceInfoRequest{})
 	if err != nil {
-		return "", fmt.Errorf("GetLatestCheckpointSequenceNumber: %w", err)
+		return 0, fmt.Errorf("GetLatestCheckpointSequenceNumber: %w", err)
 	}
-	return strconv.FormatUint(resp.GetCheckpointHeight(), 10), nil
+	return resp.GetCheckpointHeight(), nil
 }
 
 func (c *Client) GetCheckpoint(ctx context.Context, seqNum uint64) (*types.Checkpoint, error) {

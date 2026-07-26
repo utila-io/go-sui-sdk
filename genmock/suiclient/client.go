@@ -209,10 +209,10 @@ func (mr *MockSuiClientMockRecorder) GetCoins(ctx, owner, coinType, cursor, limi
 }
 
 // GetLatestCheckpointSequenceNumber mocks base method.
-func (m *MockSuiClient) GetLatestCheckpointSequenceNumber(ctx context.Context) (string, error) {
+func (m *MockSuiClient) GetLatestCheckpointSequenceNumber(ctx context.Context) (uint64, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetLatestCheckpointSequenceNumber", ctx)
-	ret0, _ := ret[0].(string)
+	ret0, _ := ret[0].(uint64)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

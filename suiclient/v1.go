@@ -3,6 +3,7 @@ package suiclient
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/utila-io/go-sui-sdk/client"
 	"github.com/utila-io/go-sui-sdk/lib"
@@ -131,8 +132,13 @@ func (b *jsonrpcBackend) DevInspectTransactionBlock(
 
 // MARK - Checkpoints
 
-func (b *jsonrpcBackend) GetLatestCheckpointSequenceNumber(ctx context.Context) (string, error) {
-	return b.c.GetLatestCheckpointSequenceNumber(ctx)
+func (b *jsonrpcBackend) GetLatestCheckpointSequenceNumber(ctx context.Context) (uint64, error) {
+	// The JSON-RPC wire format carries the sequence number as a decimal string.
+	seqNumStr, err := b.c.GetLatestCheckpointSequenceNumber(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseUint(seqNumStr, 10, 64)
 }
 
 func (b *jsonrpcBackend) GetCheckpoint(ctx context.Context, seqNum uint64) (*types.Checkpoint, error) {
