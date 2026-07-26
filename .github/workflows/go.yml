@@ -7,8 +7,7 @@ on:
     branches: [ "main", "devnet", "testnet" ]
 
 jobs:
-
-  TestAndBuild:
+  build-and-test:
     runs-on: ubuntu-latest
     env:
       WalletSdkTestM1: ${{ secrets.WALLETSDKTESTM1 }}
@@ -20,10 +19,10 @@ jobs:
       with:
         go-version: '1.26'
 
+    - name: Build
+      run: go build -v ./...
+
     # client/ and account/ tests hit Sui's retired public JSON-RPC/faucet
     # endpoints and fail unconditionally; keep them out of CI.
     - name: Test
       run: go test -v $(go list ./... | grep -v -e '/go-sui-sdk/client$' -e '/go-sui-sdk/account$')
-
-    - name: Build
-      run: go build -v ./...
