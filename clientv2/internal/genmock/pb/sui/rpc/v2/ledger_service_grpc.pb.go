@@ -182,6 +182,66 @@ func (mr *MockLedgerServiceClientMockRecorder) GetTransaction(ctx, in any, opts 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTransaction", reflect.TypeOf((*MockLedgerServiceClient)(nil).GetTransaction), varargs...)
 }
 
+// ListCheckpoints mocks base method.
+func (m *MockLedgerServiceClient) ListCheckpoints(ctx context.Context, in *rpcv2.ListCheckpointsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[rpcv2.ListCheckpointsResponse], error) {
+	m.ctrl.T.Helper()
+	varargs := []any{ctx, in}
+	for _, a := range opts {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "ListCheckpoints", varargs...)
+	ret0, _ := ret[0].(grpc.ServerStreamingClient[rpcv2.ListCheckpointsResponse])
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListCheckpoints indicates an expected call of ListCheckpoints.
+func (mr *MockLedgerServiceClientMockRecorder) ListCheckpoints(ctx, in any, opts ...any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]any{ctx, in}, opts...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListCheckpoints", reflect.TypeOf((*MockLedgerServiceClient)(nil).ListCheckpoints), varargs...)
+}
+
+// ListEvents mocks base method.
+func (m *MockLedgerServiceClient) ListEvents(ctx context.Context, in *rpcv2.ListEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[rpcv2.ListEventsResponse], error) {
+	m.ctrl.T.Helper()
+	varargs := []any{ctx, in}
+	for _, a := range opts {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "ListEvents", varargs...)
+	ret0, _ := ret[0].(grpc.ServerStreamingClient[rpcv2.ListEventsResponse])
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListEvents indicates an expected call of ListEvents.
+func (mr *MockLedgerServiceClientMockRecorder) ListEvents(ctx, in any, opts ...any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]any{ctx, in}, opts...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListEvents", reflect.TypeOf((*MockLedgerServiceClient)(nil).ListEvents), varargs...)
+}
+
+// ListTransactions mocks base method.
+func (m *MockLedgerServiceClient) ListTransactions(ctx context.Context, in *rpcv2.ListTransactionsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[rpcv2.ListTransactionsResponse], error) {
+	m.ctrl.T.Helper()
+	varargs := []any{ctx, in}
+	for _, a := range opts {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "ListTransactions", varargs...)
+	ret0, _ := ret[0].(grpc.ServerStreamingClient[rpcv2.ListTransactionsResponse])
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListTransactions indicates an expected call of ListTransactions.
+func (mr *MockLedgerServiceClientMockRecorder) ListTransactions(ctx, in any, opts ...any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]any{ctx, in}, opts...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTransactions", reflect.TypeOf((*MockLedgerServiceClient)(nil).ListTransactions), varargs...)
+}
+
 // MockLedgerServiceServer is a mock of LedgerServiceServer interface.
 type MockLedgerServiceServer struct {
 	ctrl     *gomock.Controller
@@ -309,6 +369,48 @@ func (m *MockLedgerServiceServer) GetTransaction(arg0 context.Context, arg1 *rpc
 func (mr *MockLedgerServiceServerMockRecorder) GetTransaction(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTransaction", reflect.TypeOf((*MockLedgerServiceServer)(nil).GetTransaction), arg0, arg1)
+}
+
+// ListCheckpoints mocks base method.
+func (m *MockLedgerServiceServer) ListCheckpoints(arg0 *rpcv2.ListCheckpointsRequest, arg1 grpc.ServerStreamingServer[rpcv2.ListCheckpointsResponse]) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListCheckpoints", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ListCheckpoints indicates an expected call of ListCheckpoints.
+func (mr *MockLedgerServiceServerMockRecorder) ListCheckpoints(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListCheckpoints", reflect.TypeOf((*MockLedgerServiceServer)(nil).ListCheckpoints), arg0, arg1)
+}
+
+// ListEvents mocks base method.
+func (m *MockLedgerServiceServer) ListEvents(arg0 *rpcv2.ListEventsRequest, arg1 grpc.ServerStreamingServer[rpcv2.ListEventsResponse]) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListEvents", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ListEvents indicates an expected call of ListEvents.
+func (mr *MockLedgerServiceServerMockRecorder) ListEvents(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListEvents", reflect.TypeOf((*MockLedgerServiceServer)(nil).ListEvents), arg0, arg1)
+}
+
+// ListTransactions mocks base method.
+func (m *MockLedgerServiceServer) ListTransactions(arg0 *rpcv2.ListTransactionsRequest, arg1 grpc.ServerStreamingServer[rpcv2.ListTransactionsResponse]) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListTransactions", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ListTransactions indicates an expected call of ListTransactions.
+func (mr *MockLedgerServiceServerMockRecorder) ListTransactions(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTransactions", reflect.TypeOf((*MockLedgerServiceServer)(nil).ListTransactions), arg0, arg1)
 }
 
 // mustEmbedUnimplementedLedgerServiceServer mocks base method.
