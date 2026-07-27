@@ -1,10 +1,12 @@
 package clientv2
 
 import (
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/proto"
 
@@ -52,6 +54,33 @@ func testAddress(t *testing.T) sui_types.SuiAddress {
 
 // testDigest returns a distinct 32-byte digest with no zero bytes, so its
 // base58 string form roundtrips exactly.
+// fakeStream serves canned frames as a server-streaming client. Only Recv is
+// reached by the client code, so the rest of the interface comes from the
+// embedded nil grpc.ClientStream.
+type fakeStream[R any] struct {
+	grpc.ClientStream
+	frames []*R
+	next   int
+	// err is returned in place of io.EOF once the frames run out.
+	err error
+}
+
+func (s *fakeStream[R]) Recv() (*R, error) {
+	if s.next < len(s.frames) {
+		frame := s.frames[s.next]
+		s.next++
+		return frame, nil
+	}
+	if s.err != nil {
+		return nil, s.err
+	}
+	return nil, io.EOF
+}
+
+func newFakeStream[R any](frames ...*R) grpc.ServerStreamingClient[R] {
+	return &fakeStream[R]{frames: frames}
+}
+
 func testDigest(i int) sui_types.TransactionDigest {
 	digest := make(lib.Base58, 32)
 	for j := range digest {

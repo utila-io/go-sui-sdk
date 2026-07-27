@@ -186,6 +186,33 @@ func (b *jsonrpcBackend) GetCheckpointTransactions(
 	seqNum uint64,
 	options types.SuiTransactionBlockResponseOptions,
 ) ([]*types.SuiTransactionBlockResponse, error) {
+	return b.queryCheckpointTransactions(ctx, seqNum, options)
+}
+
+// ListTransactions walks the range one checkpoint at a time: suix_queryTransactionBlocks
+// filters on a single checkpoint and its filter variants cannot be combined,
+// so JSON-RPC has no checkpoint-range query.
+func (b *jsonrpcBackend) ListTransactions(
+	ctx context.Context,
+	startCheckpoint, endCheckpoint uint64,
+	options types.SuiTransactionBlockResponseOptions,
+) ([]*types.SuiTransactionBlockResponse, error) {
+	var out []*types.SuiTransactionBlockResponse
+	for seqNum := startCheckpoint; seqNum < endCheckpoint; seqNum++ {
+		transactions, err := b.queryCheckpointTransactions(ctx, seqNum, options)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, transactions...)
+	}
+	return out, nil
+}
+
+func (b *jsonrpcBackend) queryCheckpointTransactions(
+	ctx context.Context,
+	seqNum uint64,
+	options types.SuiTransactionBlockResponseOptions,
+) ([]*types.SuiTransactionBlockResponse, error) {
 	// The Checkpoint filter must be a BigInt encoded as a decimal string, so
 	// the query is built as a map (types.SuiTransactionBlockResponseQuery's
 	// filter field is numeric).

@@ -166,13 +166,9 @@ func setupParity() (*parityEnv, error) {
 // checkpoint containing a transaction with balance changes, a SUI-holding
 // address with a modest coin count, and SIP-58 accumulator activity.
 func (env *parityEnv) discoverFixtures(ctx context.Context) error {
-	latestStr, err := env.v1.GetLatestCheckpointSequenceNumber(ctx)
+	latest, err := env.v1.GetLatestCheckpointSequenceNumber(ctx)
 	if err != nil {
 		return fmt.Errorf("discover: latest checkpoint: %w", err)
-	}
-	latest, err := strconv.ParseUint(latestStr, 10, 64)
-	if err != nil {
-		return fmt.Errorf("discover: latest checkpoint %q: %w", latestStr, err)
 	}
 
 	options := types.SuiTransactionBlockResponseOptions{ShowEffects: true, ShowBalanceChanges: true}
@@ -447,18 +443,13 @@ func TestParityGetLatestCheckpointSequenceNumber(t *testing.T) {
 	fromV2, err := env.v2.GetLatestCheckpointSequenceNumber(ctx)
 	require.NoError(t, err)
 
-	seqV1, err := strconv.ParseUint(fromV1, 10, 64)
-	require.NoError(t, err, "v1 checkpoint height %q is not numeric", fromV1)
-	seqV2, err := strconv.ParseUint(fromV2, 10, 64)
-	require.NoError(t, err, "v2 checkpoint height %q is not numeric", fromV2)
-
-	delta := int64(seqV2) - int64(seqV1)
+	delta := int64(fromV2) - int64(fromV1)
 	if delta < 0 {
 		delta = -delta
 	}
 	// Two independent nodes at the same tip; testnet does ~5 checkpoints/s so
 	// 600 is about two minutes of allowed lag.
-	require.LessOrEqual(t, delta, int64(600), "checkpoint heights too far apart: v1 %d, v2 %d", seqV1, seqV2)
+	require.LessOrEqual(t, delta, int64(600), "checkpoint heights too far apart: v1 %d, v2 %d", fromV1, fromV2)
 }
 
 func TestParityGetCheckpoint(t *testing.T) {
@@ -503,6 +494,32 @@ func TestParityGetCheckpointTransactions(t *testing.T) {
 		txV1, ok := byDigestV1[txV2.Digest.String()]
 		require.True(t, ok, "v2 returned digest %s missing from v1", txV2.Digest)
 		require.NoError(t, compareTxResponse(txV1, txV2, options))
+	}
+}
+
+func TestParityListTransactions(t *testing.T) {
+	env, ctx := parity(t), liveCtx(t)
+	const span = 2
+	options := types.SuiTransactionBlockResponseOptions{ShowEffects: true, ShowBalanceChanges: true}
+	fromV1, err := env.v1.ListTransactions(ctx, env.seq, env.seq+span, options)
+	require.NoError(t, err)
+	fromV2, err := env.v2.ListTransactions(ctx, env.seq, env.seq+span, options)
+	require.NoError(t, err)
+
+	require.Len(t, fromV2, len(fromV1), "different transaction counts for checkpoints [%d, %d)", env.seq, env.seq+span)
+	byDigestV1 := make(map[string]*types.SuiTransactionBlockResponse, len(fromV1))
+	for _, tx := range fromV1 {
+		byDigestV1[tx.Digest.String()] = tx
+	}
+	// Both backends must group the range by ascending checkpoint.
+	var previous uint64
+	for _, txV2 := range fromV2 {
+		txV1, ok := byDigestV1[txV2.Digest.String()]
+		require.True(t, ok, "v2 returned digest %s missing from v1", txV2.Digest)
+		require.NoError(t, compareTxResponse(txV1, txV2, options))
+		require.NotNil(t, txV2.Checkpoint)
+		require.GreaterOrEqual(t, txV2.Checkpoint.Uint64(), previous)
+		previous = txV2.Checkpoint.Uint64()
 	}
 }
 

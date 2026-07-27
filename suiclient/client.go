@@ -42,6 +42,14 @@ type SuiClient interface {
 
 	GetTransactionBlock(ctx context.Context, digest sui_types.TransactionDigest, options types.SuiTransactionBlockResponseOptions) (*types.SuiTransactionBlockResponse, error)
 	MultiGetTransactionBlocks(ctx context.Context, digests []sui_types.TransactionDigest, options types.SuiTransactionBlockResponseOptions) ([]*types.SuiTransactionBlockResponse, error)
+	// ListTransactions returns every transaction in checkpoints
+	// [startCheckpoint, endCheckpoint), ascending by checkpoint and by
+	// position within it. An empty or inverted range yields nothing. Only
+	// executed ranges should be requested: past the chain tip gRPC truncates
+	// while JSON-RPC may error. Divergence: gRPC scans the whole range in one
+	// stream; JSON-RPC has no range query and walks it checkpoint by
+	// checkpoint, so a wide range costs one round trip per checkpoint.
+	ListTransactions(ctx context.Context, startCheckpoint, endCheckpoint uint64, options types.SuiTransactionBlockResponseOptions) ([]*types.SuiTransactionBlockResponse, error)
 	// ExecuteTransactionBlock submits a signed transaction: BCS
 	// TransactionData bytes plus sui_types.Signature values (or base64
 	// strings of serialized signatures).

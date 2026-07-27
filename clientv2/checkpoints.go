@@ -3,11 +3,8 @@ package clientv2
 import (
 	"context"
 	"fmt"
-	"sync"
-	"sync/atomic"
 
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 
 	pb "github.com/utila-io/go-sui-sdk/clientv2/internal/pb/sui/rpc/v2"
@@ -25,14 +22,15 @@ func (c *Client) GetLatestCheckpointSequenceNumber(ctx context.Context) (uint64,
 }
 
 func (c *Client) GetCheckpoint(ctx context.Context, seqNum uint64) (*types.Checkpoint, error) {
-	checkpoint, err := c.getCheckpoint(ctx, seqNum, pb.CheckpointReadMaskPaths)
+	resp, err := c.ledger.GetCheckpoint(ctx, &pb.GetCheckpointRequest{
+		CheckpointId: &pb.GetCheckpointRequest_SequenceNumber{SequenceNumber: seqNum},
+		ReadMask:     &fieldmaskpb.FieldMask{Paths: pb.CheckpointReadMaskPaths},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("GetCheckpoint: %w", err)
 	}
-	return checkpoint.ToInternalType(), nil
+	return resp.GetCheckpoint().ToInternalType(), nil
 }
-
-const checkpointFetchConcurrency = 8
 
 // GetCheckpoints returns up to limit sequential checkpoints from startSeqNum
 // (inclusive), ascending, ending early at the tip of the chain. A limit <= 0
@@ -44,68 +42,55 @@ func (c *Client) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit i
 		return nil, nil
 	}
 	ctx, cancel := context.WithCancel(ctx)
+	// Releases the stream when a scan stops before its final frame.
 	defer cancel()
 
-	var (
-		checkpoints = make([]*pb.Checkpoint, limit)
-		firstErr    atomic.Pointer[error]
-		// firstMissing is the lowest NotFound offset; only ever decreases.
-		// Initialized to limit — the first-missing offset of a fully present
-		// range — so it always equals the collected hole-free prefix length.
-		firstMissing atomic.Int64
-		indices      = make(chan int)
-		wg           sync.WaitGroup
-	)
-	firstMissing.Store(int64(limit))
-
-	go func() {
-		defer close(indices)
-		for i := range limit {
-			if int64(i) >= firstMissing.Load() {
-				return
-			}
-			select {
-			case indices <- i:
-			case <-ctx.Done():
-				return
-			}
+	// endCheckpoint is exclusive, so the range bound alone caps the scan at
+	// limit checkpoints; no item limit is needed.
+	end := startSeqNum + uint64(limit)
+	collected := make([]*pb.Checkpoint, 0, limit)
+	for {
+		stream, err := c.ledger.ListCheckpoints(ctx, &pb.ListCheckpointsRequest{
+			ReadMask:        &fieldmaskpb.FieldMask{Paths: pb.CheckpointReadMaskPaths},
+			StartCheckpoint: proto.Uint64(startSeqNum + uint64(len(collected))),
+			EndCheckpoint:   proto.Uint64(end),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("GetCheckpoints: %w", err)
 		}
-	}()
-
-	for range min(limit, checkpointFetchConcurrency) {
-		wg.Go(func() {
-			for i := range indices {
-				if int64(i) >= firstMissing.Load() || ctx.Err() != nil {
-					continue
-				}
-				checkpoint, err := c.getCheckpoint(ctx, startSeqNum+uint64(i), pb.CheckpointReadMaskPaths)
-				switch {
-				case err == nil:
-					checkpoints[i] = checkpoint
-				case status.Code(err) == codes.NotFound:
-					for current := firstMissing.Load(); int64(i) < current; current = firstMissing.Load() {
-						if firstMissing.CompareAndSwap(current, int64(i)) {
-							break
-						}
-					}
-				default:
-					if firstErr.CompareAndSwap(nil, &err) {
-						cancel()
-					}
-				}
+		items, _, reason, err := scanRound(stream, func(resp *pb.ListCheckpointsResponse) listFrame[pb.Checkpoint] {
+			return listFrame[pb.Checkpoint]{
+				item:   resp.GetCheckpoint(),
+				cursor: resp.GetWatermark().GetCursor(),
+				end:    resp.GetEnd(),
 			}
 		})
-	}
-	wg.Wait()
+		if err != nil {
+			return nil, fmt.Errorf("GetCheckpoints: %w", err)
+		}
 
-	if err := firstErr.Load(); err != nil {
-		return nil, fmt.Errorf("GetCheckpoints: %w", *err)
+		// A gap means the scan skipped checkpoints the node does not have; keep
+		// the hole-free prefix and let the classification below decide whether
+		// that is the chain tip or pruning.
+		gap := false
+		for _, checkpoint := range items {
+			if checkpoint.GetSequenceNumber() != startSeqNum+uint64(len(collected)) {
+				gap = true
+				break
+			}
+			collected = append(collected, checkpoint)
+		}
+		// An empty round cannot make progress on a retry.
+		if gap || len(items) == 0 || len(collected) >= limit || !resumable(reason) {
+			break
+		}
 	}
-	missing := int(firstMissing.Load())
-	if missing < limit {
+
+	if len(collected) < limit {
 		// Distinguish "past the chain tip" (truncate) from "pruned" (error):
-		// a pruned node returns NotFound below its retention watermark too.
-		missingSeq := startSeqNum + uint64(missing)
+		// a pruned node has no checkpoints below its retention watermark
+		// either, and skips them just the same.
+		missingSeq := startSeqNum + uint64(len(collected))
 		info, err := c.ledger.GetServiceInfo(ctx, &pb.GetServiceInfoRequest{})
 		if err != nil {
 			return nil, fmt.Errorf("GetCheckpoints: classifying missing checkpoint %d: %w", missingSeq, err)
@@ -114,9 +99,9 @@ func (c *Client) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit i
 			return nil, fmt.Errorf("GetCheckpoints: checkpoint %d pruned; node retains from %d", missingSeq, lowest)
 		}
 	}
-	out := make([]*types.Checkpoint, 0, missing)
-	for i := range missing {
-		out = append(out, checkpoints[i].ToInternalType())
+	out := make([]*types.Checkpoint, 0, len(collected))
+	for _, checkpoint := range collected {
+		out = append(out, checkpoint.ToInternalType())
 	}
 	return out, nil
 }
@@ -128,28 +113,9 @@ func (c *Client) GetCheckpointTransactions(
 	seqNum uint64,
 	options types.SuiTransactionBlockResponseOptions,
 ) ([]*types.SuiTransactionBlockResponse, error) {
-	checkpoint, err := c.getCheckpoint(ctx, seqNum, []string{"sequence_number", "transactions.digest"})
-	if err != nil {
-		return nil, fmt.Errorf("GetCheckpointTransactions: %w", err)
-	}
-	digests := make([]string, len(checkpoint.GetTransactions()))
-	for i, tx := range checkpoint.GetTransactions() {
-		digests[i] = tx.GetDigest()
-	}
-	responses, err := c.batchGetTransactions(ctx, digests, options)
+	responses, err := c.listTransactions(ctx, seqNum, seqNum+1, options)
 	if err != nil {
 		return nil, fmt.Errorf("GetCheckpointTransactions: %w", err)
 	}
 	return responses, nil
-}
-
-func (c *Client) getCheckpoint(ctx context.Context, seqNum uint64, readMaskPaths []string) (*pb.Checkpoint, error) {
-	resp, err := c.ledger.GetCheckpoint(ctx, &pb.GetCheckpointRequest{
-		CheckpointId: &pb.GetCheckpointRequest_SequenceNumber{SequenceNumber: seqNum},
-		ReadMask:     &fieldmaskpb.FieldMask{Paths: readMaskPaths},
-	})
-	if err != nil {
-		return nil, err
-	}
-	return resp.GetCheckpoint(), nil
 }

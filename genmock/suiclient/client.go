@@ -268,6 +268,21 @@ func (mr *MockSuiClientMockRecorder) GetTransactionBlock(ctx, digest, options an
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTransactionBlock", reflect.TypeOf((*MockSuiClient)(nil).GetTransactionBlock), ctx, digest, options)
 }
 
+// ListTransactions mocks base method.
+func (m *MockSuiClient) ListTransactions(ctx context.Context, startCheckpoint, endCheckpoint uint64, options types.SuiTransactionBlockResponseOptions) ([]*types.SuiTransactionBlockResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListTransactions", ctx, startCheckpoint, endCheckpoint, options)
+	ret0, _ := ret[0].([]*types.SuiTransactionBlockResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListTransactions indicates an expected call of ListTransactions.
+func (mr *MockSuiClientMockRecorder) ListTransactions(ctx, startCheckpoint, endCheckpoint, options any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTransactions", reflect.TypeOf((*MockSuiClient)(nil).ListTransactions), ctx, startCheckpoint, endCheckpoint, options)
+}
+
 // MultiGetObjects mocks base method.
 func (m *MockSuiClient) MultiGetObjects(ctx context.Context, objIDs []sui_types.ObjectID, options *types.SuiObjectDataOptions) ([]types.SuiObjectResponse, error) {
 	m.ctrl.T.Helper()

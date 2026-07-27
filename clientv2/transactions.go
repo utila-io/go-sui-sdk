@@ -1,6 +1,7 @@
 package clientv2
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 
@@ -49,6 +50,85 @@ func (c *Client) MultiGetTransactionBlocks(
 		return nil, fmt.Errorf("MultiGetTransactionBlocks: %w", err)
 	}
 	return responses, nil
+}
+
+// ListTransactions returns every transaction in checkpoints [startCheckpoint,
+// endCheckpoint), ascending by checkpoint and by position within it, shaped per
+// options. An empty or inverted range yields nothing; a range reaching past the
+// chain tip stops there.
+func (c *Client) ListTransactions(
+	ctx context.Context,
+	startCheckpoint, endCheckpoint uint64,
+	options types.SuiTransactionBlockResponseOptions,
+) ([]*types.SuiTransactionBlockResponse, error) {
+	responses, err := c.listTransactions(ctx, startCheckpoint, endCheckpoint, options)
+	if err != nil {
+		return nil, fmt.Errorf("ListTransactions: %w", err)
+	}
+	return responses, nil
+}
+
+func (c *Client) listTransactions(
+	ctx context.Context,
+	startCheckpoint, endCheckpoint uint64,
+	options types.SuiTransactionBlockResponseOptions,
+) ([]*types.SuiTransactionBlockResponse, error) {
+	if endCheckpoint <= startCheckpoint {
+		return nil, nil
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	// Releases the stream when a scan stops before its final frame.
+	defer cancel()
+
+	readMask := &fieldmaskpb.FieldMask{Paths: pb.ResponseReadMaskPaths(options)}
+	var (
+		out    []*types.SuiTransactionBlockResponse
+		cursor []byte
+	)
+	for {
+		// Transactions are addressed by their position inside a checkpoint, so
+		// unlike checkpoints a resumed scan must continue from the opaque
+		// cursor rather than from the next checkpoint number.
+		req := &pb.ListTransactionsRequest{
+			ReadMask:        readMask,
+			StartCheckpoint: proto.Uint64(startCheckpoint),
+			EndCheckpoint:   proto.Uint64(endCheckpoint),
+		}
+		if cursor != nil {
+			req.Options = &pb.QueryOptions{After: cursor}
+		}
+		stream, err := c.ledger.ListTransactions(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		items, next, reason, err := scanRound(stream, func(resp *pb.ListTransactionsResponse) listFrame[pb.ExecutedTransaction] {
+			return listFrame[pb.ExecutedTransaction]{
+				item:   resp.GetTransaction(),
+				cursor: resp.GetWatermark().GetCursor(),
+				end:    resp.GetEnd(),
+			}
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, transaction := range items {
+			response := transaction.ToInternalType(options)
+			if response == nil {
+				return nil, fmt.Errorf("node returned an empty transaction in checkpoint range [%d, %d)", startCheckpoint, endCheckpoint)
+			}
+			out = append(out, response)
+		}
+
+		if !resumable(reason) {
+			return out, nil
+		}
+		// Erroring beats returning a short range: the caller cannot tell a
+		// truncated scan from a checkpoint range that held nothing else.
+		if next == nil || (len(items) == 0 && bytes.Equal(next, cursor)) {
+			return nil, fmt.Errorf("query stopped at %s without advancing past checkpoint %d", reason, startCheckpoint)
+		}
+		cursor = next
+	}
 }
 
 func (c *Client) batchGetTransactions(
