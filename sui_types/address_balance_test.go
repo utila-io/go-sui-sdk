@@ -303,26 +303,53 @@ func TestWithdrawalTransfer_WithoutCoins(t *testing.T) {
 
 	pt := ptb.Finish()
 
-	// Inputs: recipient(0), amount(1), withdrawal(2)
-	if len(pt.Inputs) != 3 {
-		t.Fatalf("expected 3 inputs, got %d", len(pt.Inputs))
+	// Inputs: recipient(0), withdrawal(1)
+	if len(pt.Inputs) != 2 {
+		t.Fatalf("expected 2 inputs, got %d", len(pt.Inputs))
 	}
-	if pt.Inputs[2].FundsWithdrawal == nil {
-		t.Fatal("input[2] must be FundsWithdrawal")
+	if pt.Inputs[0].Pure == nil {
+		t.Fatal("input[0] must be recipient pure")
+	}
+	if pt.Inputs[1].FundsWithdrawal == nil {
+		t.Fatal("input[1] must be FundsWithdrawal")
 	}
 
-	// Commands: redeem_funds, SplitCoins, TransferObjects (no MergeCoins)
-	if len(pt.Commands) != 3 {
-		t.Fatalf("expected 3 commands, got %d", len(pt.Commands))
+	// Commands: redeem_funds, TransferObjects. The redeemed Coin<T> is transferred
+	// whole — an unconsumed redeem result would abort with UnusedValueWithoutDrop.
+	if len(pt.Commands) != 2 {
+		t.Fatalf("expected 2 commands, got %d", len(pt.Commands))
 	}
 	if pt.Commands[0].MoveCall == nil || string(pt.Commands[0].MoveCall.Function) != "redeem_funds" {
 		t.Fatal("cmd[0] must be redeem_funds")
 	}
-	if pt.Commands[1].SplitCoins == nil {
-		t.Fatal("cmd[1] must be SplitCoins")
+	transfer := pt.Commands[1].TransferObjects
+	if transfer == nil {
+		t.Fatal("cmd[1] must be TransferObjects")
 	}
-	if pt.Commands[2].TransferObjects == nil {
-		t.Fatal("cmd[2] must be TransferObjects")
+	if len(transfer.Arguments) != 1 {
+		t.Fatalf("expected 1 transferred object, got %d", len(transfer.Arguments))
+	}
+	if transfer.Arguments[0].Result == nil || *transfer.Arguments[0].Result != 0 {
+		t.Fatalf("transferred object must be the redeem_funds result, got %+v", transfer.Arguments[0])
+	}
+	if transfer.Argument.Input == nil || *transfer.Argument.Input != 0 {
+		t.Fatalf("transfer recipient must be input[0], got %+v", transfer.Argument)
+	}
+}
+
+func TestWithdrawalTransfer_WithoutCoins_amountMismatchRejected(t *testing.T) {
+	var recipient SuiAddress
+	recipient[31] = 0xBB
+
+	coinType, _ := ParseCoinTypeTag("0x2::sui::SUI")
+
+	ptb := NewProgrammableTransactionBuilder()
+	err := ptb.WithdrawalTransfer(recipient, nil, 1_000_000, 2_000_000, coinType)
+	if err == nil {
+		t.Fatal("expected error when withdrawalAmount != amount and no coins are supplied")
+	}
+	if len(ptb.Inputs) != 0 || len(ptb.Commands) != 0 {
+		t.Fatal("builder must not be mutated on rejection")
 	}
 }
 
