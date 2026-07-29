@@ -179,6 +179,12 @@ func CreateFundsWithdrawalArgument(p *ProgrammableTransactionBuilder, arg FundsW
 	return Argument{Input: &i}
 }
 
+// WithdrawalTransfer builds a PTB moving amount of coinType to recipient, redeeming
+// withdrawalAmount from the sender's SIP-58 address balance as a Coin<T>. With coins it
+// merges them (plus the redeemed coin) and splits amount off for the recipient; without
+// coins it transfers the redeemed coin whole, so the caller must guarantee
+// withdrawalAmount == amount — anything else is rejected, since the leftover Coin<T>
+// result has no drop ability and nowhere to go (see gaslessTransferFromBalance).
 func (p *ProgrammableTransactionBuilder) WithdrawalTransfer(
 	recipient SuiAddress,
 	coins []*ObjectRef,

@@ -2,6 +2,7 @@ package sui_types
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/fardream/go-bcs/bcs"
@@ -242,11 +243,8 @@ func TestWithdrawalTransfer_WithCoins(t *testing.T) {
 	if len(pt.Commands) != 4 {
 		t.Fatalf("expected 4 commands, got %d", len(pt.Commands))
 	}
-	if pt.Commands[0].MoveCall == nil {
-		t.Fatal("cmd[0] must be MoveCall (redeem_funds)")
-	}
-	if string(pt.Commands[0].MoveCall.Function) != "redeem_funds" {
-		t.Fatalf("cmd[0] function = %s, want redeem_funds", pt.Commands[0].MoveCall.Function)
+	if m, f := moveCallFn(t, pt.Commands[0]); m != "coin" || f != "redeem_funds" {
+		t.Fatalf("cmd[0] = %s::%s, want coin::redeem_funds", m, f)
 	}
 	if pt.Commands[1].MergeCoins == nil {
 		t.Fatal("cmd[1] must be MergeCoins")
@@ -319,8 +317,20 @@ func TestWithdrawalTransfer_WithoutCoins(t *testing.T) {
 	if len(pt.Commands) != 2 {
 		t.Fatalf("expected 2 commands, got %d", len(pt.Commands))
 	}
-	if pt.Commands[0].MoveCall == nil || string(pt.Commands[0].MoveCall.Function) != "redeem_funds" {
-		t.Fatal("cmd[0] must be redeem_funds")
+	// Must be coin::redeem_funds — balance::redeem_funds returns a Balance<T>,
+	// which is not an object and cannot be handed to TransferObjects.
+	if m, f := moveCallFn(t, pt.Commands[0]); m != "coin" || f != "redeem_funds" {
+		t.Fatalf("cmd[0] = %s::%s, want coin::redeem_funds", m, f)
+	}
+	redeem := pt.Commands[0].MoveCall
+	if len(redeem.TypeArguments) != 1 || !reflect.DeepEqual(redeem.TypeArguments[0], coinType) {
+		t.Fatalf("redeem_funds type arguments = %+v, want [%+v]", redeem.TypeArguments, coinType)
+	}
+	if len(redeem.Arguments) != 1 || redeem.Arguments[0].Input == nil || *redeem.Arguments[0].Input != 1 {
+		t.Fatalf("redeem_funds argument must be the FundsWithdrawal input[1], got %+v", redeem.Arguments)
+	}
+	if got := *pt.Inputs[1].FundsWithdrawal.Reservation.MaxAmountU64; got != 2_000_000 {
+		t.Fatalf("withdrawal reservation = %d, want 2000000", got)
 	}
 	transfer := pt.Commands[1].TransferObjects
 	if transfer == nil {
