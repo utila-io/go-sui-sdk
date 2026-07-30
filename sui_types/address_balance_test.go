@@ -2,6 +2,7 @@ package sui_types
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/fardream/go-bcs/bcs"
@@ -242,11 +243,8 @@ func TestWithdrawalTransfer_WithCoins(t *testing.T) {
 	if len(pt.Commands) != 4 {
 		t.Fatalf("expected 4 commands, got %d", len(pt.Commands))
 	}
-	if pt.Commands[0].MoveCall == nil {
-		t.Fatal("cmd[0] must be MoveCall (redeem_funds)")
-	}
-	if string(pt.Commands[0].MoveCall.Function) != "redeem_funds" {
-		t.Fatalf("cmd[0] function = %s, want redeem_funds", pt.Commands[0].MoveCall.Function)
+	if m, f := moveCallFn(t, pt.Commands[0]); m != "coin" || f != "redeem_funds" {
+		t.Fatalf("cmd[0] = %s::%s, want coin::redeem_funds", m, f)
 	}
 	if pt.Commands[1].MergeCoins == nil {
 		t.Fatal("cmd[1] must be MergeCoins")
@@ -303,26 +301,65 @@ func TestWithdrawalTransfer_WithoutCoins(t *testing.T) {
 
 	pt := ptb.Finish()
 
-	// Inputs: recipient(0), amount(1), withdrawal(2)
-	if len(pt.Inputs) != 3 {
-		t.Fatalf("expected 3 inputs, got %d", len(pt.Inputs))
+	// Inputs: recipient(0), withdrawal(1)
+	if len(pt.Inputs) != 2 {
+		t.Fatalf("expected 2 inputs, got %d", len(pt.Inputs))
 	}
-	if pt.Inputs[2].FundsWithdrawal == nil {
-		t.Fatal("input[2] must be FundsWithdrawal")
+	if pt.Inputs[0].Pure == nil {
+		t.Fatal("input[0] must be recipient pure")
+	}
+	if pt.Inputs[1].FundsWithdrawal == nil {
+		t.Fatal("input[1] must be FundsWithdrawal")
 	}
 
-	// Commands: redeem_funds, SplitCoins, TransferObjects (no MergeCoins)
-	if len(pt.Commands) != 3 {
-		t.Fatalf("expected 3 commands, got %d", len(pt.Commands))
+	// Commands: redeem_funds, TransferObjects. The redeemed Coin<T> is transferred
+	// whole — an unconsumed redeem result would abort with UnusedValueWithoutDrop.
+	if len(pt.Commands) != 2 {
+		t.Fatalf("expected 2 commands, got %d", len(pt.Commands))
 	}
-	if pt.Commands[0].MoveCall == nil || string(pt.Commands[0].MoveCall.Function) != "redeem_funds" {
-		t.Fatal("cmd[0] must be redeem_funds")
+	// Must be coin::redeem_funds — balance::redeem_funds returns a Balance<T>,
+	// which is not an object and cannot be handed to TransferObjects.
+	if m, f := moveCallFn(t, pt.Commands[0]); m != "coin" || f != "redeem_funds" {
+		t.Fatalf("cmd[0] = %s::%s, want coin::redeem_funds", m, f)
 	}
-	if pt.Commands[1].SplitCoins == nil {
-		t.Fatal("cmd[1] must be SplitCoins")
+	redeem := pt.Commands[0].MoveCall
+	if len(redeem.TypeArguments) != 1 || !reflect.DeepEqual(redeem.TypeArguments[0], coinType) {
+		t.Fatalf("redeem_funds type arguments = %+v, want [%+v]", redeem.TypeArguments, coinType)
 	}
-	if pt.Commands[2].TransferObjects == nil {
-		t.Fatal("cmd[2] must be TransferObjects")
+	if len(redeem.Arguments) != 1 || redeem.Arguments[0].Input == nil || *redeem.Arguments[0].Input != 1 {
+		t.Fatalf("redeem_funds argument must be the FundsWithdrawal input[1], got %+v", redeem.Arguments)
+	}
+	if got := *pt.Inputs[1].FundsWithdrawal.Reservation.MaxAmountU64; got != 2_000_000 {
+		t.Fatalf("withdrawal reservation = %d, want 2000000", got)
+	}
+	transfer := pt.Commands[1].TransferObjects
+	if transfer == nil {
+		t.Fatal("cmd[1] must be TransferObjects")
+	}
+	if len(transfer.Arguments) != 1 {
+		t.Fatalf("expected 1 transferred object, got %d", len(transfer.Arguments))
+	}
+	if transfer.Arguments[0].Result == nil || *transfer.Arguments[0].Result != 0 {
+		t.Fatalf("transferred object must be the redeem_funds result, got %+v", transfer.Arguments[0])
+	}
+	if transfer.Argument.Input == nil || *transfer.Argument.Input != 0 {
+		t.Fatalf("transfer recipient must be input[0], got %+v", transfer.Argument)
+	}
+}
+
+func TestWithdrawalTransfer_WithoutCoins_amountMismatchRejected(t *testing.T) {
+	var recipient SuiAddress
+	recipient[31] = 0xBB
+
+	coinType, _ := ParseCoinTypeTag("0x2::sui::SUI")
+
+	ptb := NewProgrammableTransactionBuilder()
+	err := ptb.WithdrawalTransfer(recipient, nil, 1_000_000, 2_000_000, coinType)
+	if err == nil {
+		t.Fatal("expected error when withdrawalAmount != amount and no coins are supplied")
+	}
+	if len(ptb.Inputs) != 0 || len(ptb.Commands) != 0 {
+		t.Fatal("builder must not be mutated on rejection")
 	}
 }
 

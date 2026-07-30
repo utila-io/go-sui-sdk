@@ -179,6 +179,12 @@ func CreateFundsWithdrawalArgument(p *ProgrammableTransactionBuilder, arg FundsW
 	return Argument{Input: &i}
 }
 
+// WithdrawalTransfer builds a PTB moving amount of coinType to recipient, redeeming
+// withdrawalAmount from the sender's SIP-58 address balance as a Coin<T>. With coins it
+// merges them (plus the redeemed coin) and splits amount off for the recipient; without
+// coins it transfers the redeemed coin whole, so the caller must guarantee
+// withdrawalAmount == amount — anything else is rejected, since the leftover Coin<T>
+// result has no drop ability and nowhere to go (see gaslessTransferFromBalance).
 func (p *ProgrammableTransactionBuilder) WithdrawalTransfer(
 	recipient SuiAddress,
 	coins []*ObjectRef,
@@ -189,64 +195,68 @@ func (p *ProgrammableTransactionBuilder) WithdrawalTransfer(
 	if withdrawalAmount == 0 {
 		return fmt.Errorf("withdrawalAmount must be non-zero")
 	}
+	// With no coins the redeemed Coin<T> is a PTB Result with no drop ability: it must
+	// be consumed whole or the transaction aborts on-chain with UnusedValueWithoutDrop.
+	// There is no coin object to hold a remainder and no sender address to credit one
+	// back to, so the redeemed coin must be worth exactly the transfer amount.
+	if len(coins) == 0 && withdrawalAmount != amount {
+		return fmt.Errorf(
+			"address-balance-only withdrawal transfer requires withdrawalAmount (%d) == amount (%d)",
+			withdrawalAmount,
+			amount,
+		)
+	}
 	recArg, err := p.Pure(recipient)
 	if err != nil {
 		return err
 	}
+
+	if len(coins) == 0 {
+		redeemResult := p.redeemFunds("coin", withdrawalAmount, coinType)
+		p.Command(
+			Command{
+				TransferObjects: &TransferObjectsCommand{
+					Arguments: []Argument{redeemResult},
+					Argument:  recArg,
+				},
+			},
+		)
+		return nil
+	}
+
 	amtArg, err := p.Pure(amount)
 	if err != nil {
 		return err
 	}
 
-	withdrawalArg := CreateFundsWithdrawalArgument(p, FundsWithdrawalArg{
-		Reservation:  Reservation{MaxAmountU64: &withdrawalAmount},
-		TypeArg:      WithdrawalTypeArg{Balance: &coinType},
-		WithdrawFrom: WithdrawFrom{Sender: &lib.EmptyEnum{}},
-	})
+	redeemResult := p.redeemFunds("coin", withdrawalAmount, coinType)
 
-	redeemResult := p.Command(
-		Command{
-			MoveCall: &ProgrammableMoveCall{
-				Package:       Sui2FrameworkID,
-				Module:        "coin",
-				Function:      "redeem_funds",
-				TypeArguments: []move_types.TypeTag{coinType},
-				Arguments:     []Argument{withdrawalArg},
-			},
+	sourceCoin, err := p.Obj(
+		ObjectArg{
+			ImmOrOwnedObject: coins[0],
 		},
 	)
-
-	var sourceCoin Argument
-	if len(coins) > 0 {
-		sourceCoin, err = p.Obj(
+	if err != nil {
+		return err
+	}
+	var mergeSources []Argument
+	for _, c := range coins[1:] {
+		coinArg, err := p.Obj(
 			ObjectArg{
-				ImmOrOwnedObject: coins[0],
+				ImmOrOwnedObject: c,
 			},
 		)
 		if err != nil {
 			return err
 		}
-		var mergeSources []Argument
-		for _, c := range coins[1:] {
-			coinArg, err := p.Obj(
-				ObjectArg{
-					ImmOrOwnedObject: c,
-				},
-			)
-			if err != nil {
-				return err
-			}
-			mergeSources = append(mergeSources, coinArg)
-		}
-		mergeSources = append(mergeSources, redeemResult)
-		p.Command(
-			Command{
-				MergeCoins: &MergeCoinsCommand{Argument: sourceCoin, Arguments: mergeSources},
-			},
-		)
-	} else {
-		sourceCoin = redeemResult
+		mergeSources = append(mergeSources, coinArg)
 	}
+	mergeSources = append(mergeSources, redeemResult)
+	p.Command(
+		Command{
+			MergeCoins: &MergeCoinsCommand{Argument: sourceCoin, Arguments: mergeSources},
+		},
+	)
 
 	return p.splitSingleCoinAmountAndTransfer(sourceCoin, recArg, amtArg)
 }
