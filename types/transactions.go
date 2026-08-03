@@ -349,6 +349,44 @@ type SuiTransactionBlockResponseQuery struct {
 
 type TransactionBlocksPage = Page[SuiTransactionBlockResponse, sui_types.TransactionDigest]
 
+// TransactionRangeQuery bounds a scan of the transactions in a checkpoint range.
+type TransactionRangeQuery struct {
+	// StartCheckpoint is the inclusive lower bound; nil scans from genesis.
+	StartCheckpoint *uint64
+	// EndCheckpoint is the exclusive upper bound; nil scans to the indexed tip,
+	// which can trail the executed tip.
+	EndCheckpoint *uint64
+	// Cursor resumes strictly after a cursor from an earlier page of the same
+	// scan; nil starts at the range bound.
+	Cursor []byte
+	// Limit caps the items in one page; 0 takes the node's default, and values
+	// above the node's maximum are silently lowered.
+	Limit      uint32
+	Descending bool
+}
+
+// ListedTransaction is one transaction of a range scan.
+type ListedTransaction struct {
+	Transaction *SuiTransactionBlockResponse
+	// TransactionIndex is the position within the containing checkpoint.
+	TransactionIndex uint64
+	// Cursor resumes the scan immediately after this transaction.
+	Cursor []byte
+}
+
+// TransactionRangePage is one page of a range scan, in scan order.
+type TransactionRangePage struct {
+	Data       []ListedTransaction
+	NextCursor []byte
+	// HasMore is true when the scan stopped on a node budget rather than
+	// exhausting the range, so resuming may yield more.
+	HasMore bool
+	// Checkpoint is the boundary checkpoint the scan has fully covered, the
+	// safe point to record progress at. Nil until the scan clears its first
+	// checkpoint boundary.
+	Checkpoint *uint64
+}
+
 type DryRunTransactionBlockResponse struct {
 	Effects        lib.TagJson[SuiTransactionBlockEffects] `json:"effects"`
 	Events         []SuiEvent                              `json:"events"`

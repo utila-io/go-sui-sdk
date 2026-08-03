@@ -64,3 +64,12 @@ type SuiClient interface {
 	// gRPC connection for the gRPC backend).
 	io.Closer
 }
+
+// TransactionLister scans the transactions of a checkpoint range in one
+// streaming call, a page at a time. Off to the side of SuiClient because the
+// gRPC backend alone can serve it: JSON-RPC's queryTransactionBlocks filters a
+// single checkpoint and pages by digest, with neither a range scan nor a
+// covered-checkpoint watermark. Found by type assertion on a SuiClient.
+type TransactionLister interface {
+	ListTransactions(ctx context.Context, query types.TransactionRangeQuery, options types.SuiTransactionBlockResponseOptions) (*types.TransactionRangePage, error)
+}

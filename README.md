@@ -54,6 +54,37 @@ server-side transaction builders, faucet, staking/APY reads, and arbitrary
 with `sui_types.ProgrammableTransactionBuilder` instead, and enumerate
 checkpoint transactions with `GetCheckpointTransactions`.
 
+Capabilities only one backend can serve are separate interfaces, found by type
+assertion. `suiclient.TransactionLister` scans the transactions of a whole
+checkpoint range in one streaming call — gRPC only, since JSON-RPC has no range
+scan — which is how an indexer should walk the ledger:
+
+```go
+lister, ok := cli.(suiclient.TransactionLister)
+if !ok {
+	// JSON-RPC backend: fall back to GetCheckpointTransactions per checkpoint
+}
+query := types.TransactionRangeQuery{
+	StartCheckpoint: &from, EndCheckpoint: &to, Limit: 500,
+}
+for {
+	page, err := lister.ListTransactions(ctx, query, options)
+	if err != nil {
+		return err
+	}
+	for _, listed := range page.Data {
+		tx := listed.Transaction // *types.SuiTransactionBlockResponse
+		index(tx.Digest.String(), tx.Checkpoint.Uint64(), listed.TransactionIndex)
+	}
+	// page.Data is in ledger order; page.Checkpoint is the checkpoint fully
+	// covered so far — the safe point to record progress at
+	if !page.HasMore {
+		break
+	}
+	query.Cursor = page.NextCursor
+}
+```
+
 The gRPC bindings are generated from the
 [MystenLabs/sui-apis](https://github.com/MystenLabs/sui-apis) protos, pinned
 via the `third_party/sui-apis` git submodule. The generated code is committed,

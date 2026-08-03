@@ -11,6 +11,8 @@ import (
 	"github.com/utila-io/go-sui-sdk/clientv2"
 )
 
+var _ TransactionLister = (*clientv2.Client)(nil)
+
 // New returns a SuiClient for endpoint. The backend is selected with
 // WithBackend and defaults to BackendJSONRPC. No network I/O at construction.
 func New(endpoint string, opts ...Option) (SuiClient, error) {
