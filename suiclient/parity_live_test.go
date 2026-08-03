@@ -166,13 +166,9 @@ func setupParity() (*parityEnv, error) {
 // checkpoint containing a transaction with balance changes, a SUI-holding
 // address with a modest coin count, and SIP-58 accumulator activity.
 func (env *parityEnv) discoverFixtures(ctx context.Context) error {
-	latestStr, err := env.v1.GetLatestCheckpointSequenceNumber(ctx)
+	latest, err := env.v1.GetLatestCheckpointSequenceNumber(ctx)
 	if err != nil {
 		return fmt.Errorf("discover: latest checkpoint: %w", err)
-	}
-	latest, err := strconv.ParseUint(latestStr, 10, 64)
-	if err != nil {
-		return fmt.Errorf("discover: latest checkpoint %q: %w", latestStr, err)
 	}
 
 	options := types.SuiTransactionBlockResponseOptions{ShowEffects: true, ShowBalanceChanges: true}
@@ -442,15 +438,10 @@ func compareEffects(want, got *lib.TagJson[types.SuiTransactionBlockEffects]) er
 
 func TestParityGetLatestCheckpointSequenceNumber(t *testing.T) {
 	env, ctx := parity(t), liveCtx(t)
-	fromV1, err := env.v1.GetLatestCheckpointSequenceNumber(ctx)
+	seqV1, err := env.v1.GetLatestCheckpointSequenceNumber(ctx)
 	require.NoError(t, err)
-	fromV2, err := env.v2.GetLatestCheckpointSequenceNumber(ctx)
+	seqV2, err := env.v2.GetLatestCheckpointSequenceNumber(ctx)
 	require.NoError(t, err)
-
-	seqV1, err := strconv.ParseUint(fromV1, 10, 64)
-	require.NoError(t, err, "v1 checkpoint height %q is not numeric", fromV1)
-	seqV2, err := strconv.ParseUint(fromV2, 10, 64)
-	require.NoError(t, err, "v2 checkpoint height %q is not numeric", fromV2)
 
 	delta := int64(seqV2) - int64(seqV1)
 	if delta < 0 {
