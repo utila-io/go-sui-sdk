@@ -3,11 +3,8 @@ package clientv2
 import (
 	"context"
 	"fmt"
-	"sync"
-	"sync/atomic"
 
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 
 	pb "github.com/utila-io/go-sui-sdk/clientv2/internal/pb/sui/rpc/v2"
@@ -32,7 +29,10 @@ func (c *Client) GetCheckpoint(ctx context.Context, seqNum uint64) (*types.Check
 	return checkpoint.ToInternalType(), nil
 }
 
-const checkpointFetchConcurrency = 8
+// checkpointsPageLimit caps a single ListCheckpoints request. The node coerces
+// larger asks down to its own maximum anyway, and the scan pages until it has
+// limit checkpoints.
+const checkpointsPageLimit = 1000
 
 // GetCheckpoints returns up to limit sequential checkpoints from startSeqNum
 // (inclusive), ascending, ending early at the tip of the chain. A limit <= 0
@@ -43,80 +43,66 @@ func (c *Client) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit i
 	if limit <= 0 {
 		return nil, nil
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	collected := make([]*pb.Checkpoint, 0, min(limit, checkpointsPageLimit))
+	// next is the sequence number the scan owes; once it stops, the first one
+	// missing.
+	next := startSeqNum
 
-	var (
-		checkpoints = make([]*pb.Checkpoint, limit)
-		firstErr    atomic.Pointer[error]
-		// firstMissing is the lowest NotFound offset; only ever decreases.
-		// Initialized to limit — the first-missing offset of a fully present
-		// range — so it always equals the collected hole-free prefix length.
-		firstMissing atomic.Int64
-		indices      = make(chan int)
-		wg           sync.WaitGroup
-	)
-	firstMissing.Store(int64(limit))
-
-	go func() {
-		defer close(indices)
-		for i := range limit {
-			if int64(i) >= firstMissing.Load() {
-				return
-			}
-			select {
-			case indices <- i:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
-	for range min(limit, checkpointFetchConcurrency) {
-		wg.Go(func() {
-			for i := range indices {
-				if int64(i) >= firstMissing.Load() || ctx.Err() != nil {
-					continue
-				}
-				checkpoint, err := c.getCheckpoint(ctx, startSeqNum+uint64(i), pb.CheckpointReadMaskPaths)
-				switch {
-				case err == nil:
-					checkpoints[i] = checkpoint
-				case status.Code(err) == codes.NotFound:
-					for current := firstMissing.Load(); int64(i) < current; current = firstMissing.Load() {
-						if firstMissing.CompareAndSwap(current, int64(i)) {
-							break
-						}
-					}
-				default:
-					if firstErr.CompareAndSwap(nil, &err) {
-						cancel()
-					}
-				}
-			}
+	for len(collected) < limit {
+		before := len(collected)
+		stream, err := c.ledger.ListCheckpoints(ctx, &pb.ListCheckpointsRequest{
+			ReadMask: &fieldmaskpb.FieldMask{Paths: pb.CheckpointReadMaskPaths},
+			// One item per sequence number, so the scan resumes by advancing the
+			// range rather than carrying the watermark's opaque cursor.
+			StartCheckpoint: proto.Uint64(next),
+			EndCheckpoint:   proto.Uint64(startSeqNum + uint64(limit)),
+			Options: &pb.QueryOptions{
+				Limit: proto.Uint32(uint32(min(limit-len(collected), checkpointsPageLimit))),
+			},
 		})
+		if err != nil {
+			return nil, fmt.Errorf("GetCheckpoints: %w", c.prunedBelowRetention(ctx, next, err))
+		}
+		scanned, _, resumable, err := scanRound(stream,
+			func(frame *pb.ListCheckpointsResponse) listFrame[pb.Checkpoint] {
+				return listFrame[pb.Checkpoint]{
+					item: frame.GetCheckpoint(),
+					end:  frame.GetEnd(),
+				}
+			})
+		if err != nil {
+			return nil, fmt.Errorf("GetCheckpoints: %w", c.prunedBelowRetention(ctx, next, err))
+		}
+		for _, entry := range scanned {
+			// Checkpoint sequence numbers are contiguous, so a gap inside the
+			// range is the node misreporting, not missing history.
+			if seqNum := entry.item.GetSequenceNumber(); seqNum != next {
+				return nil, fmt.Errorf("GetCheckpoints: expected checkpoint %d, node sent %d", next, seqNum)
+			}
+			collected = append(collected, entry.item)
+			next++
+		}
+		// Resuming means asking again from next, so a round that yielded nothing
+		// would repeat forever.
+		if !resumable || len(collected) == before {
+			break
+		}
 	}
-	wg.Wait()
 
-	if err := firstErr.Load(); err != nil {
-		return nil, fmt.Errorf("GetCheckpoints: %w", *err)
-	}
-	missing := int(firstMissing.Load())
-	if missing < limit {
+	if len(collected) < limit {
 		// Distinguish "past the chain tip" (truncate) from "pruned" (error):
-		// a pruned node returns NotFound below its retention watermark too.
-		missingSeq := startSeqNum + uint64(missing)
+		// the scan stops short of the requested range either way.
 		info, err := c.ledger.GetServiceInfo(ctx, &pb.GetServiceInfoRequest{})
 		if err != nil {
-			return nil, fmt.Errorf("GetCheckpoints: classifying missing checkpoint %d: %w", missingSeq, err)
+			return nil, fmt.Errorf("GetCheckpoints: classifying missing checkpoint %d: %w", next, err)
 		}
-		if lowest := info.GetLowestAvailableCheckpoint(); missingSeq < lowest {
-			return nil, fmt.Errorf("GetCheckpoints: checkpoint %d pruned; node retains from %d", missingSeq, lowest)
+		if lowest := info.GetLowestAvailableCheckpoint(); next < lowest {
+			return nil, fmt.Errorf("GetCheckpoints: checkpoint %d pruned; node retains from %d", next, lowest)
 		}
 	}
-	out := make([]*types.Checkpoint, 0, missing)
-	for i := range missing {
-		out = append(out, checkpoints[i].ToInternalType())
+	out := make([]*types.Checkpoint, 0, len(collected))
+	for _, checkpoint := range collected {
+		out = append(out, checkpoint.ToInternalType())
 	}
 	return out, nil
 }
