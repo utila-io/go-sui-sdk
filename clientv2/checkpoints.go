@@ -1,6 +1,7 @@
 package clientv2
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 
@@ -107,24 +108,54 @@ func (c *Client) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit i
 	return out, nil
 }
 
-// GetCheckpointTransactions returns every transaction in the checkpoint,
-// shaped per options and in checkpoint order.
+// GetCheckpointTransactions returns every transaction in the checkpoint, shaped
+// per options and in checkpoint order. It is a ListTransactions scan over the
+// single-checkpoint range, replacing the GetCheckpoint-then-BatchGetTransactions
+// two-hop with one stream.
 func (c *Client) GetCheckpointTransactions(
 	ctx context.Context,
 	seqNum uint64,
 	options types.SuiTransactionBlockResponseOptions,
 ) ([]*types.SuiTransactionBlockResponse, error) {
-	checkpoint, err := c.getCheckpoint(ctx, seqNum, []string{"sequence_number", "transactions.digest"})
-	if err != nil {
-		return nil, fmt.Errorf("GetCheckpointTransactions: %w", err)
+	query := types.TransactionRangeQuery{
+		StartCheckpoint: proto.Uint64(seqNum),
+		EndCheckpoint:   proto.Uint64(seqNum + 1),
 	}
-	digests := make([]string, len(checkpoint.GetTransactions()))
-	for i, tx := range checkpoint.GetTransactions() {
-		digests[i] = tx.GetDigest()
+	var responses []*types.SuiTransactionBlockResponse
+	for {
+		page, err := c.ListTransactions(ctx, query, options)
+		if err != nil {
+			return nil, fmt.Errorf("GetCheckpointTransactions: %w", err)
+		}
+		for _, listed := range page.Data {
+			responses = append(responses, listed.Transaction)
+		}
+		if !page.HasMore {
+			break
+		}
+		// Resumable but with nowhere to resume from: returning what arrived
+		// would be indistinguishable from a complete checkpoint.
+		if len(page.NextCursor) == 0 || bytes.Equal(page.NextCursor, query.Cursor) {
+			return nil, fmt.Errorf(
+				"GetCheckpointTransactions: checkpoint %d stopped after %d transactions with no cursor to resume from",
+				seqNum, len(responses))
+		}
+		query.Cursor = page.NextCursor
 	}
-	responses, err := c.batchGetTransactions(ctx, digests, options)
-	if err != nil {
-		return nil, fmt.Errorf("GetCheckpointTransactions: %w", err)
+
+	if len(responses) == 0 {
+		// A checkpoint the node cannot serve scans just as clean as one holding
+		// nothing, so say which it was.
+		info, err := c.ledger.GetServiceInfo(ctx, &pb.GetServiceInfoRequest{})
+		if err != nil {
+			return nil, fmt.Errorf("GetCheckpointTransactions: classifying empty checkpoint %d: %w", seqNum, err)
+		}
+		if lowest := info.GetLowestAvailableCheckpoint(); seqNum < lowest {
+			return nil, fmt.Errorf("GetCheckpointTransactions: checkpoint %d pruned; node retains from %d", seqNum, lowest)
+		}
+		if height := info.GetCheckpointHeight(); seqNum > height {
+			return nil, fmt.Errorf("GetCheckpointTransactions: checkpoint %d is beyond the chain tip %d", seqNum, height)
+		}
 	}
 	return responses, nil
 }

@@ -220,42 +220,142 @@ func TestGetCheckpointsNonPositiveLimit(t *testing.T) {
 	}
 }
 
+// GetCheckpoint stays a unary read: it is the one checkpoint call a range scan
+// buys nothing for.
+func TestGetCheckpoint(t *testing.T) {
+	const seqNum = uint64(42)
+	client, mocks := newMockClient(t)
+	mocks.ledger.EXPECT().
+		GetCheckpoint(gomock.Any(), protoEqual(checkpointRequest(seqNum, checkpointReadMaskPaths...))).
+		Return(&pb.GetCheckpointResponse{Checkpoint: &pb.Checkpoint{
+			SequenceNumber: proto.Uint64(seqNum),
+			Digest:         proto.String(testDigest(int(seqNum)).String()),
+		}}, nil)
+
+	checkpoint, err := client.GetCheckpoint(context.Background(), seqNum)
+	require.NoError(t, err)
+	require.Equal(t, seqNum, checkpoint.SequenceNumber.Uint64())
+	require.Equal(t, testDigest(int(seqNum)).String(), checkpoint.Digest.String())
+}
+
+// checkpointTransactionsRequest is the single-checkpoint range GetCheckpointTransactions scans.
+func checkpointTransactionsRequest(seqNum uint64, cursor []byte, paths ...string) *pb.ListTransactionsRequest {
+	return &pb.ListTransactionsRequest{
+		ReadMask:        &fieldmaskpb.FieldMask{Paths: paths},
+		StartCheckpoint: proto.Uint64(seqNum),
+		EndCheckpoint:   proto.Uint64(seqNum + 1),
+		Options:         &pb.QueryOptions{After: cursor},
+	}
+}
+
 func TestGetCheckpointTransactions(t *testing.T) {
 	const seqNum = uint64(42)
 	client, mocks := newMockClient(t)
 
-	digests := []string{testDigest(0).String(), testDigest(1).String(), testDigest(2).String()}
-	results := make([]*pb.GetTransactionResult, len(digests))
-	checkpointTxs := make([]*pb.ExecutedTransaction, len(digests))
-	for i, digest := range digests {
-		results[i] = &pb.GetTransactionResult{
-			Result: &pb.GetTransactionResult_Transaction{
-				Transaction: &pb.ExecutedTransaction{Digest: proto.String(digest)},
+	// read_mask derived from options: events on top of the always-on paths,
+	// plus the scan's own position field.
+	paths := []string{"digest", "checkpoint", "timestamp", "events", "transaction_index"}
+	mocks.ledger.EXPECT().
+		ListTransactions(gomock.Any(), protoEqual(checkpointTransactionsRequest(seqNum, nil, paths...))).
+		Return(&fakeStream[pb.ListTransactionsResponse]{
+			frames: []*pb.ListTransactionsResponse{
+				txFrame(0, "c0"),
+				txFrame(1, "c1"),
+				withEnd(txFrame(2, "c2"), pb.QueryEndReason_QUERY_END_REASON_CHECKPOINT_BOUND),
 			},
-		}
-		checkpointTxs[i] = &pb.ExecutedTransaction{Digest: proto.String(digest)}
-	}
-	gomock.InOrder(
-		mocks.ledger.EXPECT().
-			GetCheckpoint(gomock.Any(), protoEqual(checkpointRequest(seqNum, "sequence_number", "transactions.digest"))).
-			Return(&pb.GetCheckpointResponse{Checkpoint: &pb.Checkpoint{
-				SequenceNumber: proto.Uint64(seqNum),
-				Transactions:   checkpointTxs,
-			}}, nil),
-		mocks.ledger.EXPECT().
-			BatchGetTransactions(gomock.Any(), protoEqual(&pb.BatchGetTransactionsRequest{
-				Digests: digests,
-				// read_mask derived from options: events on top of the always-on paths
-				ReadMask: &fieldmaskpb.FieldMask{Paths: []string{"digest", "checkpoint", "timestamp", "events"}},
-			})).
-			Return(&pb.BatchGetTransactionsResponse{Transactions: results}, nil),
-	)
+		}, nil)
 
 	responses, err := client.GetCheckpointTransactions(context.Background(), seqNum,
 		types.SuiTransactionBlockResponseOptions{ShowEvents: true})
 	require.NoError(t, err)
-	require.Len(t, responses, len(digests))
+	require.Len(t, responses, 3)
 	for i, response := range responses {
-		require.Equal(t, digests[i], response.Digest.String())
+		require.Equal(t, testDigest(i).String(), response.Digest.String())
+	}
+}
+
+// A checkpoint holding more transactions than one stream returns must be paged,
+// not silently truncated.
+func TestGetCheckpointTransactionsPages(t *testing.T) {
+	const seqNum = uint64(42)
+	client, mocks := newMockClient(t)
+	paths := []string{"digest", "checkpoint", "timestamp", "transaction_index"}
+	gomock.InOrder(
+		mocks.ledger.EXPECT().
+			ListTransactions(gomock.Any(), protoEqual(checkpointTransactionsRequest(seqNum, nil, paths...))).
+			Return(&fakeStream[pb.ListTransactionsResponse]{
+				frames: []*pb.ListTransactionsResponse{
+					withEnd(txFrame(0, "c0"), pb.QueryEndReason_QUERY_END_REASON_ITEM_LIMIT),
+				},
+			}, nil),
+		mocks.ledger.EXPECT().
+			ListTransactions(gomock.Any(), protoEqual(checkpointTransactionsRequest(seqNum, []byte("c0"), paths...))).
+			Return(&fakeStream[pb.ListTransactionsResponse]{
+				frames: []*pb.ListTransactionsResponse{
+					withEnd(txFrame(1, "c1"), pb.QueryEndReason_QUERY_END_REASON_CHECKPOINT_BOUND),
+				},
+			}, nil),
+	)
+
+	responses, err := client.GetCheckpointTransactions(context.Background(), seqNum,
+		types.SuiTransactionBlockResponseOptions{})
+	require.NoError(t, err)
+	require.Len(t, responses, 2)
+}
+
+// Resumable with no cursor to resume from: a short result would look complete.
+func TestGetCheckpointTransactionsUnresumableErrors(t *testing.T) {
+	client, mocks := newMockClient(t)
+	mocks.ledger.EXPECT().
+		ListTransactions(gomock.Any(), gomock.Any()).
+		Return(&fakeStream[pb.ListTransactionsResponse]{
+			frames: []*pb.ListTransactionsResponse{{
+				Transaction: &pb.ExecutedTransaction{Digest: proto.String(testDigest(0).String())},
+				End:         &pb.QueryEnd{Reason: pb.QueryEndReason_QUERY_END_REASON_ITEM_LIMIT.Enum()},
+			}},
+		}, nil)
+
+	responses, err := client.GetCheckpointTransactions(context.Background(), 42,
+		types.SuiTransactionBlockResponseOptions{})
+	require.Nil(t, responses)
+	require.ErrorContains(t, err, "no cursor to resume from")
+}
+
+// An empty scan means the node could not serve the checkpoint, which the old
+// GetCheckpoint hop surfaced as NotFound; keep saying which case it was.
+func TestGetCheckpointTransactionsEmptyIsClassified(t *testing.T) {
+	tests := []struct {
+		name           string
+		seqNum         uint64
+		lowest, height uint64
+		wantErr        string
+	}{
+		{name: "pruned", seqNum: 42, lowest: 500, height: 1000, wantErr: "checkpoint 42 pruned; node retains from 500"},
+		{name: "beyond tip", seqNum: 2000, lowest: 0, height: 1000, wantErr: "checkpoint 2000 is beyond the chain tip 1000"},
+		{name: "in range and genuinely empty", seqNum: 42, lowest: 0, height: 1000},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client, mocks := newMockClient(t)
+			mocks.ledger.EXPECT().
+				ListTransactions(gomock.Any(), gomock.Any()).
+				Return(&fakeStream[pb.ListTransactionsResponse]{
+					frames: []*pb.ListTransactionsResponse{{
+						End: &pb.QueryEnd{Reason: pb.QueryEndReason_QUERY_END_REASON_CHECKPOINT_BOUND.Enum()},
+					}},
+				}, nil)
+			mocks.ledger.EXPECT().
+				GetServiceInfo(gomock.Any(), gomock.Any()).
+				Return(serviceInfoResponse(test.lowest, test.height), nil)
+
+			responses, err := client.GetCheckpointTransactions(context.Background(), test.seqNum,
+				types.SuiTransactionBlockResponseOptions{})
+			if test.wantErr == "" {
+				require.NoError(t, err)
+				require.Empty(t, responses)
+				return
+			}
+			require.ErrorContains(t, err, test.wantErr)
+		})
 	}
 }
