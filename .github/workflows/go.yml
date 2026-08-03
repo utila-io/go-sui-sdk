@@ -22,6 +22,12 @@ jobs:
     - name: Build
       run: go build -v ./...
 
+    # Typechecks the live-tagged tests, which no other step compiles: they need
+    # an endpoint to run, so they are excluded from Test and would otherwise rot
+    # unnoticed. Vet does not execute them, so this stays offline and free.
+    - name: Vet (including live-tagged tests)
+      run: go vet -tags live ./...
+
     # client/ and account/ tests hit Sui's retired public JSON-RPC/faucet
     # endpoints and fail unconditionally; keep them out of CI.
     - name: Test
