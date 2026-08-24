@@ -34,8 +34,6 @@ func serviceInfoResponse(lowest, height uint64) *pb.GetServiceInfoResponse {
 	}
 }
 
-// checkpointFrames turns a run of sequence numbers into one frame each, cursors
-// named after the checkpoint, and closes the run with reason.
 func checkpointFrames(seqNums []uint64, reason pb.QueryEndReason) []*pb.ListCheckpointsResponse {
 	frames := make([]*pb.ListCheckpointsResponse, 0, len(seqNums))
 	for _, seqNum := range seqNums {
@@ -87,8 +85,7 @@ func TestGetCheckpointsAscendingOrder(t *testing.T) {
 	}
 }
 
-// A node is free to end a stream below the asked-for item limit, so the range
-// has to be paged until it is full or the node says it is exhausted.
+// A node may end a stream below the asked-for limit, so the range must be paged.
 func TestGetCheckpointsPagesUntilLimit(t *testing.T) {
 	const start, limit = uint64(100), 5
 	client, mocks := newMockClient(t)
@@ -135,8 +132,8 @@ func TestGetCheckpointsTipKeepsPrefix(t *testing.T) {
 	}
 }
 
-// The node refuses a range below its retention watermark outright rather than
-// streaming nothing, so the raw OutOfRange must become the documented error.
+// A pruned range is refused outright, so OutOfRange must become the documented
+// error rather than leaking.
 func TestGetCheckpointsPrunedReturnsError(t *testing.T) {
 	const start, limit = uint64(100), 5
 	const lowest, height = uint64(500), uint64(1000)
@@ -155,8 +152,6 @@ func TestGetCheckpointsPrunedReturnsError(t *testing.T) {
 	require.ErrorContains(t, err, "checkpoint 100 pruned; node retains from 500")
 }
 
-// Checkpoint sequence numbers are contiguous, so a hole is the node
-// misreporting rather than history the caller can silently lose.
 func TestGetCheckpointsGapReturnsError(t *testing.T) {
 	const start, limit = uint64(100), 5
 	client, mocks := newMockClient(t)
@@ -172,14 +167,12 @@ func TestGetCheckpointsGapReturnsError(t *testing.T) {
 	require.ErrorContains(t, err, "expected checkpoint 102, node sent 103")
 }
 
-// A stream that ends without a QueryEnd has not said the range is exhausted, so
-// the scan must ask again rather than truncate. This is the contract that keeps
-// an upstream reason we do not recognise from silently shortening a range.
+// No QueryEnd means the range was never declared exhausted, so the scan must ask
+// again rather than truncate.
 func TestGetCheckpointsAbsentQueryEndKeepsScanning(t *testing.T) {
 	const start, limit = uint64(100), 5
 	client, mocks := newMockClient(t)
-	// checkpointFrames always closes with a reason, so the first round's frames
-	// are built by hand to carry none.
+	// checkpointFrames always closes with a reason; this round must carry none.
 	unterminated := checkpointFrames(seqRange(start, 2), pb.QueryEndReason_QUERY_END_REASON_ITEM_LIMIT)
 	unterminated[len(unterminated)-1].End = nil
 	gomock.InOrder(
@@ -198,8 +191,7 @@ func TestGetCheckpointsAbsentQueryEndKeepsScanning(t *testing.T) {
 	require.Len(t, checkpoints, limit, "an unterminated stream must not truncate the range")
 }
 
-// A node reporting more to come while returning nothing must not be re-asked
-// forever: resuming means asking again from the same sequence number.
+// Reporting more to come while returning nothing must not loop forever.
 func TestGetCheckpointsStalledRoundStops(t *testing.T) {
 	const start, limit = uint64(100), 5
 	client, mocks := newMockClient(t)

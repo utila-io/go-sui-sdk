@@ -31,9 +31,8 @@ func (c *Client) GetCheckpoint(ctx context.Context, seqNum uint64) (*types.Check
 	return checkpoint.ToInternalType(), nil
 }
 
-// checkpointsPageLimit caps a single ListCheckpoints request. The node coerces
-// larger asks down to its own maximum anyway, and the scan pages until it has
-// limit checkpoints.
+// checkpointsPageLimit caps a single request; the node coerces larger asks down
+// to its own maximum anyway.
 const checkpointsPageLimit = 1000
 
 // GetCheckpoints returns up to limit sequential checkpoints from startSeqNum
@@ -46,16 +45,15 @@ func (c *Client) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit i
 		return nil, nil
 	}
 	collected := make([]*pb.Checkpoint, 0, min(limit, checkpointsPageLimit))
-	// next is the sequence number the scan owes; once it stops, the first one
-	// missing.
+	// The sequence number the scan owes; once it stops, the first one missing.
 	next := startSeqNum
 
 	for len(collected) < limit {
 		before := len(collected)
 		stream, err := c.ledger.ListCheckpoints(ctx, &pb.ListCheckpointsRequest{
 			ReadMask: &fieldmaskpb.FieldMask{Paths: pb.CheckpointReadMaskPaths},
-			// One item per sequence number, so the scan resumes by advancing the
-			// range rather than carrying the watermark's opaque cursor.
+			// One item per sequence number, so advancing the range resumes the
+			// scan and the watermark cursor is not needed.
 			StartCheckpoint: proto.Uint64(next),
 			EndCheckpoint:   proto.Uint64(startSeqNum + uint64(limit)),
 			Options: &pb.QueryOptions{
@@ -76,8 +74,8 @@ func (c *Client) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit i
 				return nil, fmt.Errorf("GetCheckpoints: %w", c.prunedBelowRetention(ctx, next, recvErr))
 			}
 			if checkpoint := frame.GetCheckpoint(); checkpoint != nil {
-				// Checkpoint sequence numbers are contiguous, so a gap inside the
-				// range is the node misreporting, not missing history.
+				// Sequence numbers are contiguous, so a gap is the node
+				// misreporting, not missing history.
 				if seqNum := checkpoint.GetSequenceNumber(); seqNum != next {
 					return nil, fmt.Errorf("GetCheckpoints: expected checkpoint %d, node sent %d", next, seqNum)
 				}
@@ -88,16 +86,14 @@ func (c *Client) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit i
 				resumable = scanMayContinue(end.GetReason())
 			}
 		}
-		// Resuming means asking again from next, so a round that yielded nothing
-		// would repeat forever.
+		// Resuming asks again from next, so an empty round would repeat forever.
 		if !resumable || len(collected) == before {
 			break
 		}
 	}
 
 	if len(collected) < limit {
-		// Distinguish "past the chain tip" (truncate) from "pruned" (error):
-		// the scan stops short of the requested range either way.
+		// A short range means either past the tip (fine) or pruned (an error).
 		info, err := c.ledger.GetServiceInfo(ctx, &pb.GetServiceInfoRequest{})
 		if err != nil {
 			return nil, fmt.Errorf("GetCheckpoints: classifying missing checkpoint %d: %w", next, err)

@@ -15,8 +15,7 @@ import (
 	"github.com/utila-io/go-sui-sdk/sui_types"
 )
 
-// fakeStream stands in for a server stream: it replays frames, then err (io.EOF
-// when unset). The embedded nil ClientStream is never called.
+// fakeStream replays frames, then err (io.EOF when unset).
 type fakeStream[R any] struct {
 	grpc.ClientStream
 	frames []*R
