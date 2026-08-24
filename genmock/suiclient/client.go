@@ -164,18 +164,23 @@ func (mr *MockSuiClientMockRecorder) GetCheckpointTransactions(ctx, seqNum, opti
 }
 
 // GetCheckpoints mocks base method.
-func (m *MockSuiClient) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit int) ([]*types.Checkpoint, error) {
+func (m *MockSuiClient) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit int, opts ...types.CheckpointOption) ([]*types.Checkpoint, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetCheckpoints", ctx, startSeqNum, limit)
+	varargs := []any{ctx, startSeqNum, limit}
+	for _, a := range opts {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "GetCheckpoints", varargs...)
 	ret0, _ := ret[0].([]*types.Checkpoint)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetCheckpoints indicates an expected call of GetCheckpoints.
-func (mr *MockSuiClientMockRecorder) GetCheckpoints(ctx, startSeqNum, limit any) *gomock.Call {
+func (mr *MockSuiClientMockRecorder) GetCheckpoints(ctx, startSeqNum, limit any, opts ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCheckpoints", reflect.TypeOf((*MockSuiClient)(nil).GetCheckpoints), ctx, startSeqNum, limit)
+	varargs := append([]any{ctx, startSeqNum, limit}, opts...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCheckpoints", reflect.TypeOf((*MockSuiClient)(nil).GetCheckpoints), varargs...)
 }
 
 // GetCoinMetadata mocks base method.

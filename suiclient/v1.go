@@ -147,7 +147,8 @@ func (b *jsonrpcBackend) GetCheckpoint(ctx context.Context, seqNum uint64) (*typ
 	return &resp, b.c.CallContext(ctx, &resp, client.SuiMethod("getCheckpoint"), fmt.Sprint(seqNum))
 }
 
-func (b *jsonrpcBackend) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit int) ([]*types.Checkpoint, error) {
+// The mask is accepted and ignored: sui_getCheckpoints has no field selection.
+func (b *jsonrpcBackend) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit int, _ ...types.CheckpointOption) ([]*types.Checkpoint, error) {
 	if limit <= 0 {
 		return nil, nil
 	}

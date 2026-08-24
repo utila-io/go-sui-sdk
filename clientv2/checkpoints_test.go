@@ -59,6 +59,15 @@ func seqRange(start uint64, count int) []uint64 {
 	return seqNums
 }
 
+func listCheckpointsRequestMasked(start, end uint64, limit uint32, mask []string) *pb.ListCheckpointsRequest {
+	return &pb.ListCheckpointsRequest{
+		ReadMask:        &fieldmaskpb.FieldMask{Paths: mask},
+		StartCheckpoint: proto.Uint64(start),
+		EndCheckpoint:   proto.Uint64(end),
+		Options:         &pb.QueryOptions{Limit: proto.Uint32(limit)},
+	}
+}
+
 func listCheckpointsRequest(start, end uint64, limit uint32) *pb.ListCheckpointsRequest {
 	return &pb.ListCheckpointsRequest{
 		ReadMask:        &fieldmaskpb.FieldMask{Paths: checkpointReadMaskPaths},
@@ -258,5 +267,56 @@ func TestGetCheckpointTransactions(t *testing.T) {
 	require.Len(t, responses, len(digests))
 	for i, response := range responses {
 		require.Equal(t, digests[i], response.Digest.String())
+	}
+}
+
+// WithMask narrows what the node fetches. sequence_number is forced in: the scan
+// validates contiguity and resumes by it, so a mask omitting it would make every
+// frame read as checkpoint 0.
+func TestGetCheckpointsWithMask(t *testing.T) {
+	const start, limit = uint64(100), 3
+	tests := []struct {
+		name     string
+		mask     []string
+		wantMask []string
+	}{
+		{
+			name:     "unset falls back to the full mask",
+			wantMask: checkpointReadMaskPaths,
+		},
+		{
+			name:     "caller mask is sent as given",
+			mask:     []string{"sequence_number", "digest", "transactions.digest"},
+			wantMask: []string{"sequence_number", "digest", "transactions.digest"},
+		},
+		{
+			name:     "sequence_number is prepended when omitted",
+			mask:     []string{"transactions.digest"},
+			wantMask: []string{"sequence_number", "transactions.digest"},
+		},
+		{
+			name:     "already-present sequence_number is not duplicated",
+			mask:     []string{"digest", "sequence_number"},
+			wantMask: []string{"digest", "sequence_number"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client, mocks := newMockClient(t)
+			mocks.ledger.EXPECT().
+				ListCheckpoints(gomock.Any(), protoEqual(listCheckpointsRequestMasked(start, start+limit, limit, test.wantMask))).
+				Return(&fakeStream[pb.ListCheckpointsResponse]{
+					frames: checkpointFrames(seqRange(start, limit), pb.QueryEndReason_QUERY_END_REASON_CHECKPOINT_BOUND),
+				}, nil)
+
+			var opts []types.CheckpointOption
+			if test.mask != nil {
+				opts = append(opts, types.WithMask(test.mask...))
+			}
+			checkpoints, err := client.GetCheckpoints(context.Background(), start, limit, opts...)
+			require.NoError(t, err)
+			require.Len(t, checkpoints, limit)
+		})
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
@@ -31,6 +32,19 @@ func (c *Client) GetCheckpoint(ctx context.Context, seqNum uint64) (*types.Check
 	return checkpoint.ToInternalType(), nil
 }
 
+// checkpointScanMask returns the caller's mask, or the full one when unset.
+// sequence_number is always included: the scan validates contiguity and resumes
+// by it, so without it every frame reads as checkpoint 0.
+func checkpointScanMask(mask []string) []string {
+	if len(mask) == 0 {
+		return pb.CheckpointReadMaskPaths
+	}
+	if slices.Contains(mask, "sequence_number") {
+		return mask
+	}
+	return append([]string{"sequence_number"}, mask...)
+}
+
 // checkpointsPageLimit caps a single request; the node coerces larger asks down
 // to its own maximum anyway.
 const checkpointsPageLimit = 1000
@@ -40,10 +54,16 @@ const checkpointsPageLimit = 1000
 // yields no checkpoints. If the range is truncated because the node pruned the
 // missing checkpoints (rather than not having produced them yet), an error is
 // returned instead.
-func (c *Client) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit int) ([]*types.Checkpoint, error) {
+func (c *Client) GetCheckpoints(
+	ctx context.Context,
+	startSeqNum uint64,
+	limit int,
+	opts ...types.CheckpointOption,
+) ([]*types.Checkpoint, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
+	readMask := checkpointScanMask(types.NewCheckpointReadOptions(opts...).Mask)
 	collected := make([]*pb.Checkpoint, 0, min(limit, checkpointsPageLimit))
 	// The sequence number the scan owes; once it stops, the first one missing.
 	next := startSeqNum
@@ -51,7 +71,7 @@ func (c *Client) GetCheckpoints(ctx context.Context, startSeqNum uint64, limit i
 	for len(collected) < limit {
 		before := len(collected)
 		stream, err := c.ledger.ListCheckpoints(ctx, &pb.ListCheckpointsRequest{
-			ReadMask: &fieldmaskpb.FieldMask{Paths: pb.CheckpointReadMaskPaths},
+			ReadMask: &fieldmaskpb.FieldMask{Paths: readMask},
 			// One item per sequence number, so advancing the range resumes the
 			// scan and the watermark cursor is not needed.
 			StartCheckpoint: proto.Uint64(next),
