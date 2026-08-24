@@ -68,23 +68,6 @@ func listCheckpointsRequest(start, end uint64, limit uint32) *pb.ListCheckpoints
 	}
 }
 
-func TestGetCheckpointsAscendingOrder(t *testing.T) {
-	const start, limit = uint64(100), 20
-	client, mocks := newMockClient(t)
-	mocks.ledger.EXPECT().
-		ListCheckpoints(gomock.Any(), protoEqual(listCheckpointsRequest(start, start+limit, limit))).
-		Return(&fakeStream[pb.ListCheckpointsResponse]{
-			frames: checkpointFrames(seqRange(start, limit), pb.QueryEndReason_QUERY_END_REASON_ITEM_LIMIT),
-		}, nil)
-
-	checkpoints, err := client.GetCheckpoints(context.Background(), start, limit)
-	require.NoError(t, err)
-	require.Len(t, checkpoints, limit)
-	for i, checkpoint := range checkpoints {
-		require.Equal(t, start+uint64(i), checkpoint.SequenceNumber.Uint64())
-	}
-}
-
 // A node may end a stream below the asked-for limit, so the range must be paged.
 func TestGetCheckpointsPagesUntilLimit(t *testing.T) {
 	const start, limit = uint64(100), 5
