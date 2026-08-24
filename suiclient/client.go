@@ -56,8 +56,8 @@ type SuiClient interface {
 	GetLatestCheckpointSequenceNumber(ctx context.Context) (uint64, error)
 	GetCheckpoint(ctx context.Context, seqNum uint64) (*types.Checkpoint, error)
 	// GetCheckpoints returns up to limit sequential checkpoints starting at
-	// startSeqNum (inclusive), in ascending order. types.WithMask narrows what
-	// the gRPC backend fetches; JSON-RPC returns the whole checkpoint either way.
+	// startSeqNum (inclusive), in ascending order. types.WithMask narrows the
+	// fetch on gRPC only.
 	GetCheckpoints(ctx context.Context, startSeqNum uint64, limit int, opts ...types.CheckpointOption) ([]*types.Checkpoint, error)
 	GetCheckpointTransactions(ctx context.Context, seqNum uint64, options types.SuiTransactionBlockResponseOptions) ([]*types.SuiTransactionBlockResponse, error)
 

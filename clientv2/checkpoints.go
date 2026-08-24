@@ -32,9 +32,8 @@ func (c *Client) GetCheckpoint(ctx context.Context, seqNum uint64) (*types.Check
 	return checkpoint.ToInternalType(), nil
 }
 
-// checkpointScanMask returns the caller's mask, or the full one when unset.
-// sequence_number is always included: the scan validates contiguity and resumes
-// by it, so without it every frame reads as checkpoint 0.
+// sequence_number is forced in: the scan validates contiguity and resumes by it,
+// so without it every frame reads as checkpoint 0.
 func checkpointScanMask(mask []string) []string {
 	if len(mask) == 0 {
 		return pb.CheckpointReadMaskPaths

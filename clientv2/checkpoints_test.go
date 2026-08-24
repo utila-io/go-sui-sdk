@@ -270,9 +270,6 @@ func TestGetCheckpointTransactions(t *testing.T) {
 	}
 }
 
-// WithMask narrows what the node fetches. sequence_number is forced in: the scan
-// validates contiguity and resumes by it, so a mask omitting it would make every
-// frame read as checkpoint 0.
 func TestGetCheckpointsWithMask(t *testing.T) {
 	const start, limit = uint64(100), 3
 	tests := []struct {

@@ -24,22 +24,17 @@ type Checkpoint struct {
 // CheckpointPage is a page of checkpoints as returned by sui_getCheckpoints.
 type CheckpointPage = Page[*Checkpoint, SafeSuiBigInt[uint64]]
 
-// CheckpointOption tunes a checkpoint read.
 type CheckpointOption func(*CheckpointReadOptions)
 
 type CheckpointReadOptions struct {
-	// Mask limits which checkpoint fields the backend fetches, as proto field
-	// paths. Fields left out arrive zeroed, with no way to tell that from a
-	// genuine zero, so narrow it only to fields the caller does not read. Empty
-	// fetches everything a Checkpoint can hold.
-	//
-	// Only the gRPC backend can fetch less; JSON-RPC returns the whole
-	// checkpoint regardless, so a masked read is a floor, not a guarantee.
+	// Omitted fields arrive zeroed, indistinguishable from a genuine zero, so
+	// mask out only fields the caller does not read. Empty fetches everything.
+	// JSON-RPC cannot fetch less, so a mask is a floor rather than a guarantee.
 	Mask []string
 }
 
-// WithMask limits a checkpoint read to the given proto field paths, e.g.
-// "sequence_number", "digest", "summary.previous_digest", "transactions.digest".
+// WithMask limits the read to proto field paths, e.g. "digest",
+// "summary.previous_digest", "transactions.digest".
 func WithMask(paths ...string) CheckpointOption {
 	return func(o *CheckpointReadOptions) { o.Mask = paths }
 }
