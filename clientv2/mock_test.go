@@ -1,10 +1,12 @@
 package clientv2
 
 import (
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/proto"
 
@@ -12,6 +14,26 @@ import (
 	"github.com/utila-io/go-sui-sdk/lib"
 	"github.com/utila-io/go-sui-sdk/sui_types"
 )
+
+// fakeStream replays frames, then err (io.EOF when unset).
+type fakeStream[R any] struct {
+	grpc.ClientStream
+	frames []*R
+	err    error
+	next   int
+}
+
+func (s *fakeStream[R]) Recv() (*R, error) {
+	if s.next < len(s.frames) {
+		frame := s.frames[s.next]
+		s.next++
+		return frame, nil
+	}
+	if s.err != nil {
+		return nil, s.err
+	}
+	return nil, io.EOF
+}
 
 type serviceMocks struct {
 	ledger *mock_rpcv2.MockLedgerServiceClient
