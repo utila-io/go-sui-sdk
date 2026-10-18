@@ -223,7 +223,7 @@ func TestCoin(t *testing.T) {
 	}).ToInternalCoin()
 	require.NoError(t, err)
 	require.Equal(t, types.Coin{
-		CoinType:            shortUsdcType,
+		CoinType:            longUsdcType,
 		CoinObjectId:        mustAddress(t, longObjectID),
 		Version:             types.NewSafeSuiBigInt[uint64](9007199254740993),
 		Digest:              objDigest,
@@ -284,12 +284,12 @@ func TestCoinTypeFromObjectType(t *testing.T) {
 		{
 			name: "long form outer and inner",
 			in:   longSuiPackage + "::coin::Coin<" + longUsdcType + ">",
-			want: shortUsdcType,
+			want: longUsdcType,
 		},
 		{
 			name: "nested generic inner type uses last closing bracket",
 			in:   "0x2::coin::Coin<0x00000000000000000000000000000000000000000000000000000000000000ab::lp::LP<" + longSuiType + ", " + longUsdcType + ">>",
-			want: "0xab::lp::LP<" + shortSuiType + ", " + shortUsdcType + ">",
+			want: longLpPackage + "::lp::LP<" + shortSuiType + ", " + longUsdcType + ">",
 		},
 		{
 			name:    "no generic brackets",

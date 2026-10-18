@@ -45,7 +45,11 @@ func TestGetAllBalances(t *testing.T) {
 	balances, err := client.GetAllBalances(context.Background(), owner)
 	require.NoError(t, err)
 	require.Len(t, balances, 3)
-	wantTypes := []string{"0x2::sui::SUI", "0xa::usdc::USDC", "0xb::weth::WETH"}
+	wantTypes := []string{
+		"0x2::sui::SUI",
+		"0x000000000000000000000000000000000000000000000000000000000000000a::usdc::USDC",
+		"0x000000000000000000000000000000000000000000000000000000000000000b::weth::WETH",
+	}
 	wantTotals := []int64{10, 20, 30}
 	for i, got := range balances {
 		require.Equal(t, wantTypes[i], got.CoinType)

@@ -25,6 +25,10 @@ func TestBalanceChanges(t *testing.T) {
 			Address:  proto.String(longOwnerAddress),
 			CoinType: proto.String(longSuiType),
 			Amount:   proto.String("-100"),
+		}, {
+			Address:  proto.String(longOwnerAddress),
+			CoinType: proto.String(longUsdcType),
+			Amount:   proto.String("7"),
 		}})
 		require.Empty(t, errs)
 		require.Equal(t, []types.BalanceChange{{
@@ -33,6 +37,12 @@ func TestBalanceChanges(t *testing.T) {
 			},
 			CoinType: shortSuiType,
 			Amount:   "-100",
+		}, {
+			Owner: types.ObjectOwner{
+				ObjectOwnerInternal: &types.ObjectOwnerInternal{AddressOwner: &ownerAddr},
+			},
+			CoinType: longUsdcType,
+			Amount:   "7",
 		}}, got)
 		// The owner address is the full 32-byte address, not a shortened one.
 		require.Equal(t, longOwnerAddress, got[0].Owner.AddressOwner.String())

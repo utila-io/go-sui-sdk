@@ -88,7 +88,7 @@ func TestObjectChanges(t *testing.T) {
 		require.NotNil(t, mutated)
 		require.Equal(t, sender, mutated.Sender)
 		require.Equal(t, mustAddress(t, testRecipientAddress), *mutated.Owner.AddressOwner)
-		require.Equal(t, shortUsdcType, mutated.ObjectType)
+		require.Equal(t, longUsdcType, mutated.ObjectType)
 	})
 
 	t.Run("created object", func(t *testing.T) {
@@ -111,7 +111,7 @@ func TestObjectChanges(t *testing.T) {
 		require.NotNil(t, change)
 		require.Equal(t, sender, change.Sender)
 		require.EqualValues(t, 9, *change.Owner.Shared.InitialSharedVersion)
-		require.Equal(t, "0x2::dynamic_field::Field<u64, "+shortUsdcType+">", change.ObjectType)
+		require.Equal(t, "0x2::dynamic_field::Field<u64, "+longUsdcType+">", change.ObjectType)
 		require.EqualValues(t, 9, change.Version.Uint64())
 		require.Equal(t, outDigest, change.Digest)
 	})

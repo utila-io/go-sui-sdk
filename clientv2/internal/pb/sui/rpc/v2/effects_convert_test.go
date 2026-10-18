@@ -209,7 +209,7 @@ func TestEffects_full(t *testing.T) {
 				AccumulatorObj: accumulatorObjID,
 				Address:        longOwnerAddress,
 				Operation:      types.AccumulatorOperationSplit,
-				Ty:             "0x2::balance::Balance<" + shortUsdcType + ">",
+				Ty:             "0x2::balance::Balance<" + longUsdcType + ">",
 				Value:          types.AccumulatorEventValue{Integer: nil},
 			},
 		},

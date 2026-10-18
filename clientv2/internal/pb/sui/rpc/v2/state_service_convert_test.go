@@ -36,7 +36,7 @@ func TestBalance(t *testing.T) {
 			in: &Balance{
 				CoinType: proto.String(longUsdcType),
 			},
-			wantCoinType:              shortUsdcType,
+			wantCoinType:              longUsdcType,
 			wantTotalBalance:          "0",
 			wantFundsInAddressBalance: "0",
 		},

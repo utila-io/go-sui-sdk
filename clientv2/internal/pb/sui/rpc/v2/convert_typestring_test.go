@@ -13,21 +13,21 @@ func TestNormalizeTypeString(t *testing.T) {
 		want string
 	}{
 		{
-			name: "long form trimmed to short form",
+			name: "system package long form trimmed to short form",
 			in:   longSuiType,
 			want: shortSuiType,
 		},
 		{
 			name: "nested generics normalize every address",
 			in: "0x0000000000000000000000000000000000000000000000000000000000000002::coin::Coin<" +
-				"0x00000000000000000000000000000000000000000000000000000000000000ab::mod::T<" +
+				longLpPackage + "::mod::T<" +
 				"0x0000000000000000000000000000000000000000000000000000000000000001::x::Y>>",
-			want: "0x2::coin::Coin<0xab::mod::T<0x1::x::Y>>",
+			want: "0x2::coin::Coin<" + longLpPackage + "::mod::T<0x1::x::Y>>",
 		},
 		{
 			name: "multiple generic parameters",
-			in:   "0x00000000000000000000000000000000000000000000000000000000000000ab::lp::LP<" + longSuiType + ", " + longUsdcType + ">",
-			want: "0xab::lp::LP<" + shortSuiType + ", " + shortUsdcType + ">",
+			in:   longLpPackage + "::lp::LP<" + longSuiType + ", " + longUsdcType + ">",
+			want: longLpPackage + "::lp::LP<" + shortSuiType + ", " + longUsdcType + ">",
 		},
 		{
 			name: "all-zero address keeps one digit",
@@ -65,14 +65,34 @@ func TestNormalizeTypeString(t *testing.T) {
 			want: "0x2::m::T",
 		},
 		{
-			name: "hex digit case is preserved after trimming",
-			in:   "0x00Ab::m::T",
-			want: "0xAb::m::T",
+			name: "non-system package with leading zeros stays long",
+			in:   longUsdcType,
+			want: longUsdcType,
 		},
 		{
-			name: "no leading zeros left untouched",
-			in:   "0xdee9::clob_v2::Pool<" + shortSuiType + ", " + shortUsdcType + ">",
-			want: "0xdee9::clob_v2::Pool<" + shortSuiType + ", " + shortUsdcType + ">",
+			name: "short non-system package is padded to 64 hex",
+			in:   "0xc0ffee01::usdc::USDC",
+			want: longUsdcType,
+		},
+		{
+			name: "non-system hex digits are lowercased and padded",
+			in:   "0x00Ab::m::T",
+			want: longLpPackage + "::m::T",
+		},
+		{
+			name: "every JSON-RPC short address stays short",
+			in:   "0x0::a::B<0x1::a::B, 0x3::a::B, 0x5::a::B, 0x6::a::B>",
+			want: "0x0::a::B<0x1::a::B, 0x3::a::B, 0x5::a::B, 0x6::a::B>",
+		},
+		{
+			name: "bridge package is not short in JSON-RPC",
+			in:   "0xb::bridge::Bridge",
+			want: "0x000000000000000000000000000000000000000000000000000000000000000b::bridge::Bridge",
+		},
+		{
+			name: "deepbook package trimmed to short form",
+			in:   "0x000000000000000000000000000000000000000000000000000000000000dee9::clob_v2::Pool<" + shortSuiType + ", " + longUsdcType + ">",
+			want: "0xdee9::clob_v2::Pool<" + shortSuiType + ", " + longUsdcType + ">",
 		},
 	}
 	for _, tt := range tests {

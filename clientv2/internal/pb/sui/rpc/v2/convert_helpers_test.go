@@ -20,8 +20,11 @@ const (
 	longSuiType    = "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI"
 	shortSuiType   = "0x2::sui::SUI"
 
-	longUsdcType  = "0x00000000000000000000000000000000000000000000000000000000c0ffee01::usdc::USDC"
-	shortUsdcType = "0xc0ffee01::usdc::USDC"
+	// A non-system package with leading zeros: type strings keep it long, like
+	// JSON-RPC does.
+	longUsdcType = "0x00000000000000000000000000000000000000000000000000000000c0ffee01::usdc::USDC"
+
+	longLpPackage = "0x00000000000000000000000000000000000000000000000000000000000000ab"
 
 	longOwnerAddress = "0x7a8442cf08d8f81579e39f0996b21145b2848a3e13b5c9b537f0d6b823e0904b"
 	longObjectID     = "0x0ed9afd0d3b41bbcd7458dc65b785b0d5a1e6f0a1b0e9d9f1c94b41d8b7f0f10"
