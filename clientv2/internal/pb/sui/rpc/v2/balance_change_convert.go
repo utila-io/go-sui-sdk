@@ -16,7 +16,7 @@ func (x *BalanceChange) ToInternalType() (types.BalanceChange, error) {
 		Owner: types.ObjectOwner{
 			ObjectOwnerInternal: &types.ObjectOwnerInternal{AddressOwner: &addr},
 		},
-		CoinType: normalizeTypeString(x.GetCoinType()),
+		CoinType: x.GetCoinType(),
 		Amount:   x.GetAmount(),
 	}, nil
 }

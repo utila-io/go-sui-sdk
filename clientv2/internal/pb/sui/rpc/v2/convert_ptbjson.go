@@ -168,8 +168,8 @@ func argumentJSON(arg sui_types.Argument) interface{} {
 	}
 }
 
-// typeTagString renders a Move type tag with short-form addresses, matching
-// how MoveCall type arguments are printed.
+// typeTagString renders a Move type tag with 64-hex addresses, the form gRPC
+// uses for every other type string.
 func typeTagString(tag move_types.TypeTag) string {
 	switch {
 	case tag.Bool != nil:
@@ -193,7 +193,7 @@ func typeTagString(tag move_types.TypeTag) string {
 	case tag.Vector != nil:
 		return "vector<" + typeTagString(*tag.Vector) + ">"
 	case tag.Struct != nil:
-		out := normalizeTypeString(tag.Struct.Address.String()) +
+		out := tag.Struct.Address.String() +
 			"::" + string(tag.Struct.Module) + "::" + string(tag.Struct.Name)
 		if len(tag.Struct.TypeParams) > 0 {
 			out += "<"

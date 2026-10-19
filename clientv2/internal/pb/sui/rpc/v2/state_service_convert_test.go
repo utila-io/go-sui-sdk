@@ -27,7 +27,7 @@ func TestBalance(t *testing.T) {
 				AddressBalance: proto.Uint64(250),
 				CoinBalance:    proto.Uint64(750), // has no types.Balance field; must not leak anywhere
 			},
-			wantCoinType:              shortSuiType,
+			wantCoinType:              longSuiType,
 			wantTotalBalance:          "1000",
 			wantFundsInAddressBalance: "250",
 		},
@@ -36,7 +36,7 @@ func TestBalance(t *testing.T) {
 			in: &Balance{
 				CoinType: proto.String(longUsdcType),
 			},
-			wantCoinType:              shortUsdcType,
+			wantCoinType:              longUsdcType,
 			wantTotalBalance:          "0",
 			wantFundsInAddressBalance: "0",
 		},
