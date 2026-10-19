@@ -36,6 +36,8 @@
 //     an address balance) but not address-balance deposits (merges); gRPC
 //     balance_changes count both, so the comparator nets the effects' merge
 //     events out of the v2 side before comparing.
+//   - Type strings: v2 returns every address as 64 hex digits, v1 shortens
+//     the 0x1/0x2/0x3 system packages; types are compared via fullWidthType.
 //   - Volatile values (live balances, coin lists, gas price at epoch
 //     boundaries) are fetched back-to-back and the pair is retried on
 //     mismatch.
@@ -49,6 +51,7 @@ import (
 	"math"
 	"math/big"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -219,7 +222,7 @@ func (env *parityEnv) discoverFixtures(ctx context.Context) error {
 func (env *parityEnv) pickCoinAddress(ctx context.Context, changes []types.BalanceChange) (sui_types.SuiAddress, bool) {
 	var singleCoinFallback *sui_types.SuiAddress
 	for _, change := range changes {
-		if change.CoinType != types.SUI_COIN_TYPE {
+		if fullWidthType(change.CoinType) != fullWidthType(types.SUI_COIN_TYPE) {
 			continue
 		}
 		if change.Owner.ObjectOwnerInternal == nil || change.Owner.AddressOwner == nil {
@@ -308,7 +311,7 @@ func balanceChangeKeys(changes []types.BalanceChange) []string {
 		} else if change.Owner.ObjectOwnerInternal != nil && change.Owner.ObjectOwner != nil {
 			owner = "obj:" + change.Owner.ObjectOwner.String()
 		}
-		keys = append(keys, owner+"|"+change.CoinType+"|"+change.Amount)
+		keys = append(keys, owner+"|"+fullWidthType(change.CoinType)+"|"+change.Amount)
 	}
 	sort.Strings(keys)
 	return keys
@@ -327,7 +330,7 @@ func withoutAddressBalanceMovements(changes []types.BalanceChange, effects *lib.
 		if event.Value.Integer == nil || event.Operation != types.AccumulatorOperationMerge {
 			continue
 		}
-		coinType, ok := strings.CutPrefix(event.Ty, "0x2::balance::Balance<")
+		coinType, ok := strings.CutPrefix(fullWidthType(event.Ty), fullWidthType("0x2::balance::Balance")+"<")
 		if !ok {
 			continue
 		}
@@ -343,7 +346,7 @@ func withoutAddressBalanceMovements(changes []types.BalanceChange, effects *lib.
 	out := make([]types.BalanceChange, 0, len(changes))
 	for _, change := range changes {
 		if change.Owner.ObjectOwnerInternal != nil && change.Owner.AddressOwner != nil {
-			key := change.Owner.AddressOwner.String() + "|" + change.CoinType
+			key := change.Owner.AddressOwner.String() + "|" + fullWidthType(change.CoinType)
 			if fromAccumulator, ok := accumulated[key]; ok {
 				amount, parsed := new(big.Int).SetString(change.Amount, 10)
 				if parsed {
@@ -363,7 +366,7 @@ func withoutAddressBalanceMovements(changes []types.BalanceChange, effects *lib.
 func eventTypes(events []types.SuiEvent) []string {
 	out := make([]string, len(events))
 	for i, event := range events {
-		out[i] = event.Type
+		out[i] = fullWidthType(event.Type)
 	}
 	return out
 }
@@ -636,7 +639,7 @@ func TestParityGetBalance(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if fromV1.CoinType != fromV2.CoinType {
+		if fullWidthType(fromV1.CoinType) != fullWidthType(fromV2.CoinType) {
 			return fmt.Errorf("coinType: v1 %s, v2 %s", fromV1.CoinType, fromV2.CoinType)
 		}
 		if !fromV1.TotalBalance.Equal(fromV2.TotalBalance) {
@@ -657,7 +660,7 @@ func TestParityGetAllBalances(t *testing.T) {
 	snapshot := func(balances []types.Balance) map[string]balancePair {
 		out := make(map[string]balancePair, len(balances))
 		for _, balance := range balances {
-			out[balance.CoinType] = balancePair{
+			out[fullWidthType(balance.CoinType)] = balancePair{
 				total: balance.TotalBalance.String(),
 				funds: balance.FundsInAddressBalance.String(),
 			}
@@ -841,6 +844,20 @@ func ownerKey(owner *types.ObjectOwner) string {
 	}
 }
 
+var typeAddressPattern = regexp.MustCompile(`0[xX][0-9a-fA-F]+`)
+
+// fullWidthType pads every address in a Move type string to 64 hex digits:
+// gRPC returns that form while JSON-RPC shortens the system packages.
+func fullWidthType(typeStr string) string {
+	return typeAddressPattern.ReplaceAllStringFunc(typeStr, func(addr string) string {
+		id, err := sui_types.NewObjectIdFromHex(addr)
+		if err != nil {
+			return addr
+		}
+		return id.String()
+	})
+}
+
 // normalizeMoveFieldValue canonicalizes the two backends' Move field
 // renderings so they can be compared: v1 (JSON-RPC) wraps a UID as
 // {"id": "0x…"} where v2's server-side json rendering may inline it, and
@@ -892,7 +909,7 @@ func compareObjectResponse(want, got *types.SuiObjectResponse) error {
 	if wantData.Digest.String() != gotData.Digest.String() {
 		return fmt.Errorf("%s: digest: v1 %s, v2 %s", wantData.ObjectId, wantData.Digest, gotData.Digest)
 	}
-	if wantData.Type == nil || gotData.Type == nil || *wantData.Type != *gotData.Type {
+	if wantData.Type == nil || gotData.Type == nil || fullWidthType(*wantData.Type) != fullWidthType(*gotData.Type) {
 		return fmt.Errorf("%s: type: v1 %v, v2 %v", wantData.ObjectId, wantData.Type, gotData.Type)
 	}
 	if ownerKey(wantData.Owner) != ownerKey(gotData.Owner) {
@@ -931,7 +948,7 @@ func compareObjectContent(want, got *types.SuiObjectData) error {
 		// gap), nothing more to compare.
 		return nil
 	}
-	if wantMove.Type != gotMove.Type {
+	if fullWidthType(wantMove.Type) != fullWidthType(gotMove.Type) {
 		return fmt.Errorf("%s: content type: v1 %s, v2 %s", want.ObjectId, wantMove.Type, gotMove.Type)
 	}
 	if wantMove.HasPublicTransfer != gotMove.HasPublicTransfer {

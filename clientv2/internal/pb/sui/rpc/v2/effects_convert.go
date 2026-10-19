@@ -97,7 +97,7 @@ func (x *ChangedObject) toInternalAccumulatorEvent() types.AccumulatorEvent {
 	event := types.AccumulatorEvent{
 		AccumulatorObj: x.GetObjectId(),
 		Address:        write.GetAddress(),
-		Ty:             normalizeTypeString(write.GetAccumulatorType()),
+		Ty:             write.GetAccumulatorType(),
 	}
 	switch write.GetOperation() {
 	case AccumulatorWrite_MERGE:
