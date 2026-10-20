@@ -1,5 +1,5 @@
-// Package suiclient provides a backend-neutral Sui client: the same SuiClient
-// interface served by JSON-RPC (the default) or the sui.rpc.v2 gRPC backend.
+// Package suiclient provides the SuiClient interface, served by the
+// sui.rpc.v2 gRPC client in clientv2.
 package suiclient
 
 import (
@@ -12,11 +12,10 @@ import (
 )
 
 // CoinPage is a page of coins. Unlike types.CoinPage, the cursor is a string:
-// both backends' wire cursors are opaque base64, not an ObjectID.
+// the wire cursor is opaque base64, not an ObjectID.
 type CoinPage = types.Page[types.Coin, string]
 
-// SuiClient is the surface implemented by both the JSON-RPC and gRPC
-// backends; it contains only methods every backend fully supports.
+// SuiClient is the Sui client surface.
 type SuiClient interface {
 	// Coins & balances
 
@@ -25,10 +24,8 @@ type SuiClient interface {
 	GetBalance(ctx context.Context, owner sui_types.SuiAddress, coinType string) (*types.Balance, error)
 	GetAllBalances(ctx context.Context, owner sui_types.SuiAddress) ([]types.Balance, error)
 	// GetCoins returns a page of coin objects; a nil coinType defaults to
-	// 0x2::sui::SUI. Divergence: JSON-RPC synthesizes a pseudo-coin for the
-	// owner's SIP-58 address balance (no on-chain object, unusable as an
-	// object ref); gRPC returns real coin objects only — use GetBalance's
-	// FundsInAddressBalance for that portion.
+	// 0x2::sui::SUI. Only real coin objects are returned; the SIP-58 address
+	// balance is in GetBalance's FundsInAddressBalance.
 	GetCoins(ctx context.Context, owner sui_types.SuiAddress, coinType *string, cursor *string, limit uint) (*CoinPage, error)
 	GetCoinMetadata(ctx context.Context, coinType string) (*types.SuiCoinMetadata, error)
 	GetReferenceGasPrice(ctx context.Context) (*types.SafeSuiBigInt[uint64], error)
@@ -57,11 +54,10 @@ type SuiClient interface {
 	GetCheckpoint(ctx context.Context, seqNum uint64) (*types.Checkpoint, error)
 	// GetCheckpoints returns up to limit sequential checkpoints starting at
 	// startSeqNum (inclusive), in ascending order. types.WithMask narrows the
-	// fetch on gRPC only.
+	// fetch.
 	GetCheckpoints(ctx context.Context, startSeqNum uint64, limit int, opts ...types.CheckpointOption) ([]*types.Checkpoint, error)
 	GetCheckpointTransactions(ctx context.Context, seqNum uint64, options types.SuiTransactionBlockResponseOptions) ([]*types.SuiTransactionBlockResponse, error)
 
-	// Closer releases backend resources (no-op for JSON-RPC; closes the
-	// gRPC connection for the gRPC backend).
+	// Closer closes the gRPC connection (no-op for a WithGRPCConn one).
 	io.Closer
 }
