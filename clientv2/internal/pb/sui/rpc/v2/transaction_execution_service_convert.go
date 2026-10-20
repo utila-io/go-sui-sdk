@@ -25,14 +25,14 @@ func (x *CommandResult) ToInternalType() types.ExecutionResultType {
 			types.MutableReferenceOutputType([]any{
 				mutated.GetArgument().ToInternalType(),
 				mutated.GetValue().GetValue(),
-				mutated.GetValue().GetName(),
+				normalizeTypeString(mutated.GetValue().GetName()),
 			}))
 	}
 	for _, returned := range x.GetReturnValues() {
 		result.ReturnValues = append(result.ReturnValues,
 			types.ReturnValueType([]any{
 				returned.GetValue().GetValue(),
-				returned.GetValue().GetName(),
+				normalizeTypeString(returned.GetValue().GetName()),
 			}))
 	}
 	return result

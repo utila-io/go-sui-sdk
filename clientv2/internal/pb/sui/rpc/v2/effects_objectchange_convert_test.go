@@ -44,7 +44,7 @@ func TestObjectChanges(t *testing.T) {
 		require.NotNil(t, mutated)
 		require.Equal(t, sender, mutated.Sender)
 		require.Equal(t, sender, *mutated.Owner.AddressOwner)
-		require.Equal(t, longGasType, mutated.ObjectType)
+		require.Equal(t, "0x2::coin::Coin<0x2::sui::SUI>", mutated.ObjectType)
 		require.Equal(t, mustAddress(t, longObjectID), mutated.ObjectId)
 		require.EqualValues(t, 42, mutated.Version.Uint64())
 		require.EqualValues(t, 41, mutated.PreviousVersion.Uint64())
@@ -57,7 +57,7 @@ func TestObjectChanges(t *testing.T) {
 			"type": "mutated",
 			"sender": "`+longOwnerAddress+`",
 			"owner": {"AddressOwner": "`+longOwnerAddress+`"},
-			"objectType": "`+longGasType+`",
+			"objectType": "0x2::coin::Coin<0x2::sui::SUI>",
 			"objectId": "`+longObjectID+`",
 			"version": "42",
 			"previousVersion": "41",
@@ -88,7 +88,7 @@ func TestObjectChanges(t *testing.T) {
 		require.NotNil(t, mutated)
 		require.Equal(t, sender, mutated.Sender)
 		require.Equal(t, mustAddress(t, testRecipientAddress), *mutated.Owner.AddressOwner)
-		require.Equal(t, longUsdcType, mutated.ObjectType)
+		require.Equal(t, shortUsdcType, mutated.ObjectType)
 	})
 
 	t.Run("created object", func(t *testing.T) {
@@ -111,7 +111,7 @@ func TestObjectChanges(t *testing.T) {
 		require.NotNil(t, change)
 		require.Equal(t, sender, change.Sender)
 		require.EqualValues(t, 9, *change.Owner.Shared.InitialSharedVersion)
-		require.Equal(t, longSuiPackage+"::dynamic_field::Field<u64, "+longUsdcType+">", change.ObjectType)
+		require.Equal(t, "0x2::dynamic_field::Field<u64, "+shortUsdcType+">", change.ObjectType)
 		require.EqualValues(t, 9, change.Version.Uint64())
 		require.Equal(t, outDigest, change.Digest)
 	})

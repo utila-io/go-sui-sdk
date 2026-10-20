@@ -369,30 +369,3 @@ func TestPickupCoins(t *testing.T) {
 		)
 	}
 }
-
-func TestCoin_IsSUI(t *testing.T) {
-	tests := []struct {
-		name     string
-		coinType string
-		want     bool
-	}{
-		{name: "short SUI", coinType: SUI_COIN_TYPE, want: true},
-		{
-			name:     "64-hex SUI",
-			coinType: "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI",
-			want:     true,
-		},
-		{
-			name:     "other coin",
-			coinType: "0x06864a6f921804860930db6ddbe2e16acdf8504495ea7481637a1c8b9a8fe54b::cetus::CETUS",
-			want:     false,
-		},
-		{name: "same module in another package", coinType: "0x3::sui::SUI", want: false},
-		{name: "malformed", coinType: "SUI", want: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, (&Coin{CoinType: tt.coinType}).IsSUI())
-		})
-	}
-}

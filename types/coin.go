@@ -38,20 +38,8 @@ func (c *Coin) Reference() *sui_types.ObjectRef {
 
 type CoinPage = Page[Coin, sui_types.ObjectID]
 
-// IsSUI reports whether the coin is native SUI, whether CoinType carries the
-// short (0x2) or the 64-hex package address.
 func (c *Coin) IsSUI() bool {
-	tag, err := sui_types.ParseCoinTypeTag(c.CoinType)
-	if err != nil {
-		return false
-	}
-	sui, err := sui_types.ParseCoinTypeTag(SUI_COIN_TYPE)
-	if err != nil {
-		return false
-	}
-	return tag.Struct.Address == sui.Struct.Address &&
-		tag.Struct.Module == sui.Struct.Module &&
-		tag.Struct.Name == sui.Struct.Name
+	return c.CoinType == SUI_COIN_TYPE
 }
 
 type Balance struct {

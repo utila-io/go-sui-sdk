@@ -145,9 +145,9 @@ func (x *ChangedObject) toInternalWrittenObjectParts() (sui_types.ObjectID, type
 // following space, which is how gRPC effects print them.
 var typeParamSeparator = regexp.MustCompile(`,\s*`)
 
-// normalizeObjectType puts ", " between a changed object's type parameters,
-// which is how the internal objectType renders them. Addresses stay as gRPC
-// returns them.
+// normalizeObjectType rewrites a changed object's type to the exact objectType
+// rendering the internal shape uses: short-form addresses and ", " between
+// type parameters.
 func normalizeObjectType(typeStr string) string {
-	return typeParamSeparator.ReplaceAllString(typeStr, ", ")
+	return normalizeTypeString(typeParamSeparator.ReplaceAllString(typeStr, ", "))
 }

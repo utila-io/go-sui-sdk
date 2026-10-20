@@ -37,7 +37,7 @@ func (x *TransactionEvents) ToInternalType(txDigest string) ([]types.SuiEvent, [
 			PackageId:         packageID,
 			TransactionModule: event.GetModule(),
 			Sender:            sender,
-			Type:              event.GetEventType(),
+			Type:              normalizeTypeString(event.GetEventType()),
 			ParsedJson:        event.GetJson().AsInterface(),
 			Bcs:               lib.Base58(event.GetContents().GetValue()).String(),
 		})

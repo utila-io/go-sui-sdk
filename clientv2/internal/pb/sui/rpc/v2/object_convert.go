@@ -35,7 +35,7 @@ func (x *Object) ToInternalType(options *types.SuiObjectDataOptions) (*types.Sui
 		return data, nil
 	}
 	if options.ShowType {
-		objectType := x.GetObjectType()
+		objectType := normalizeTypeString(x.GetObjectType())
 		data.Type = &objectType
 	}
 	if options.ShowContent {
@@ -98,7 +98,7 @@ func (x *Object) toInternalParsedData() *lib.TagJson[types.SuiParsedData] {
 	return &lib.TagJson[types.SuiParsedData]{
 		Data: types.SuiParsedData{
 			MoveObject: &types.SuiParsedMoveObject{
-				Type:              x.GetObjectType(),
+				Type:              normalizeTypeString(x.GetObjectType()),
 				HasPublicTransfer: x.GetHasPublicTransfer(),
 				Fields:            x.GetJson().AsInterface(),
 			},
@@ -117,7 +117,7 @@ func (x *Object) toInternalRawData() *lib.TagJson[types.SuiRawData] {
 	return &lib.TagJson[types.SuiRawData]{
 		Data: types.SuiRawData{
 			MoveObject: &types.SuiRawMoveObject{
-				Type:              x.GetObjectType(),
+				Type:              normalizeTypeString(x.GetObjectType()),
 				HasPublicTransfer: x.GetHasPublicTransfer(),
 				Version:           x.GetVersion(),
 				BcsBytes:          lib.Base64Data(x.GetContents().GetValue()),
@@ -126,15 +126,15 @@ func (x *Object) toInternalRawData() *lib.TagJson[types.SuiRawData] {
 	}
 }
 
-// coinTypeFromObjectType extracts the inner type T from a "0x2::coin::Coin<T>"
-// object type string.
+// coinTypeFromObjectType extracts the normalized inner type T from a
+// "0x2::coin::Coin<T>" object type string.
 func coinTypeFromObjectType(objectType string) (string, error) {
 	open := strings.Index(objectType, "<")
 	close_ := strings.LastIndex(objectType, ">")
 	if open < 0 || close_ < open {
 		return "", fmt.Errorf("unexpected coin object type format: %s", objectType)
 	}
-	return objectType[open+1 : close_], nil
+	return normalizeTypeString(objectType[open+1 : close_]), nil
 }
 
 // ObjectNotFound builds the response for an object that does not exist, so a

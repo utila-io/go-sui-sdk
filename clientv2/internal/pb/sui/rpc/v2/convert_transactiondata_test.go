@@ -82,7 +82,7 @@ func TestTransactionBlock(t *testing.T) {
 				"package":        longSuiPackage,
 				"module":         "coin",
 				"function":       "join",
-				"type_arguments": []string{longSuiType},
+				"type_arguments": []string{shortSuiType},
 				"arguments": []interface{}{
 					map[string]interface{}{"Input": uint16(2)},
 					map[string]interface{}{"Input": uint16(3)},

@@ -63,22 +63,23 @@ func TestObjectData_allOptions(t *testing.T) {
 	require.NoError(t, err)
 
 	ownerAddr := mustAddress(t, longOwnerAddress)
+	shortCoinType := "0x2::coin::Coin<" + shortSuiType + ">"
 	storageRebate := types.NewSafeSuiBigInt[uint64](9880000)
 	require.Equal(t, &types.SuiObjectData{
 		ObjectId: mustAddress(t, longObjectID),
 		Version:  types.NewSafeSuiBigInt[sui_types.SequenceNumber](44),
 		Digest:   objDigest,
-		Type:     ptr(longGasType),
+		Type:     ptr(shortCoinType),
 		Content: &lib.TagJson[types.SuiParsedData]{Data: types.SuiParsedData{
 			MoveObject: &types.SuiParsedMoveObject{
-				Type:              longGasType,
+				Type:              shortCoinType,
 				HasPublicTransfer: true,
 				Fields:            map[string]any{"balance": "1000"},
 			},
 		}},
 		Bcs: &lib.TagJson[types.SuiRawData]{Data: types.SuiRawData{
 			MoveObject: &types.SuiRawMoveObject{
-				Type:              longGasType,
+				Type:              shortCoinType,
 				HasPublicTransfer: true,
 				Version:           44,
 				BcsBytes:          lib.Base64Data([]byte{0x0a, 0x0b}),
@@ -222,7 +223,7 @@ func TestCoin(t *testing.T) {
 	}).ToInternalCoin()
 	require.NoError(t, err)
 	require.Equal(t, types.Coin{
-		CoinType:            longUsdcType,
+		CoinType:            shortUsdcType,
 		CoinObjectId:        mustAddress(t, longObjectID),
 		Version:             types.NewSafeSuiBigInt[uint64](9007199254740993),
 		Digest:              objDigest,
@@ -276,19 +277,19 @@ func TestCoinTypeFromObjectType(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "long form inner type passes through",
+			name: "long form inner type normalized",
 			in:   "0x2::coin::Coin<" + longSuiType + ">",
-			want: longSuiType,
+			want: shortSuiType,
 		},
 		{
 			name: "long form outer and inner",
 			in:   longSuiPackage + "::coin::Coin<" + longUsdcType + ">",
-			want: longUsdcType,
+			want: shortUsdcType,
 		},
 		{
 			name: "nested generic inner type uses last closing bracket",
 			in:   "0x2::coin::Coin<0x00000000000000000000000000000000000000000000000000000000000000ab::lp::LP<" + longSuiType + ", " + longUsdcType + ">>",
-			want: "0x00000000000000000000000000000000000000000000000000000000000000ab::lp::LP<" + longSuiType + ", " + longUsdcType + ">",
+			want: "0xab::lp::LP<" + shortSuiType + ", " + shortUsdcType + ">",
 		},
 		{
 			name:    "no generic brackets",
