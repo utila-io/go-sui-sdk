@@ -31,7 +31,7 @@ func TestBalanceChanges(t *testing.T) {
 			Owner: types.ObjectOwner{
 				ObjectOwnerInternal: &types.ObjectOwnerInternal{AddressOwner: &ownerAddr},
 			},
-			CoinType: shortSuiType,
+			CoinType: longSuiType,
 			Amount:   "-100",
 		}}, got)
 		// The owner address is the full 32-byte address, not a shortened one.
