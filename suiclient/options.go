@@ -26,7 +26,7 @@ func WithGRPCDialOptions(opts ...grpc.DialOption) Option {
 // WithGRPCConn makes the client use a caller-provided connection; New's
 // endpoint argument is then ignored and may be empty. The caller keeps
 // ownership (the client's Close is a no-op) and should apply
-// clientv2.MaxRecvMsgSize when dialing. Mutually exclusive with
+// client.MaxRecvMsgSize when dialing. Mutually exclusive with
 // WithGRPCDialOptions.
 func WithGRPCConn(conn grpc.ClientConnInterface) Option {
 	return func(c *config) {

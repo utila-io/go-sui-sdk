@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/utila-io/go-sui-sdk/clientv2"
+	"github.com/utila-io/go-sui-sdk/client"
 )
 
 // unreachableEndpoint points at a port that is essentially guaranteed to be
@@ -45,10 +45,10 @@ func TestNewIsLazy(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			client, err := New(unreachableEndpoint, c.opts...)
+			sc, err := New(unreachableEndpoint, c.opts...)
 			require.NoError(t, err)
-			require.IsType(t, &clientv2.Client{}, client)
-			require.NoError(t, client.Close())
+			require.IsType(t, &client.Client{}, sc)
+			require.NoError(t, sc.Close())
 		})
 	}
 }
@@ -105,7 +105,7 @@ func TestNewWithGRPCConn(t *testing.T) {
 	conn := callerConn(t)
 	c, err := New("", WithGRPCConn(conn))
 	require.NoError(t, err)
-	require.IsType(t, &clientv2.Client{}, c)
+	require.IsType(t, &client.Client{}, c)
 
 	// The connection is caller-owned: Close on the client must not shut it down.
 	require.NoError(t, c.Close())

@@ -7,7 +7,7 @@
 # when regenerating or updating to a newer sui-apis.
 
 SUI_APIS_REF := ba0beea331aa58c3a92712f3b6c05c4d9ba86fe6
-PB_DIR := clientv2/internal/pb
+PB_DIR := client/internal/pb
 SUI_APIS_DIR := third_party/sui-apis
 
 .PHONY: proto proto-update
