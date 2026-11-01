@@ -1,0 +1,112 @@
+// Package clientv2 is the sui.rpc.v2 gRPC backend of suiclient.SuiClient. It
+// mirrors the SDK's internal response shapes; the proto conversions live
+// alongside the generated bindings in internal/pb.
+package clientv2
+
+import (
+	"errors"
+	"fmt"
+	"net"
+	"strings"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
+
+	pb "github.com/utila-io/go-sui-sdk/clientv2/internal/pb/sui/rpc/v2"
+)
+
+// MaxRecvMsgSize raises the default 4 MiB gRPC receive limit (large checkpoint
+// responses exceed it). NewClient applies it by default; callers injecting a
+// connection via NewClientWithConn must apply it themselves when dialing.
+const MaxRecvMsgSize = 64 * 1024 * 1024
+
+var (
+	errEmptyEndpoint   = errors.New("empty gRPC endpoint")
+	errInvalidEndpoint = errors.New("gRPC endpoint must be host:port; URL paths and parameters cannot be dialed (send headers via WithHeaders instead)")
+)
+
+type Client struct {
+	// ownedConn is the connection dialed by NewClient; nil when the
+	// connection was injected via NewClientWithConn (caller-owned).
+	ownedConn *grpc.ClientConn
+	ledger    pb.LedgerServiceClient
+	state     pb.StateServiceClient
+	exec      pb.TransactionExecutionServiceClient
+}
+
+// NewClientWithConn creates a client on a caller-provided gRPC connection. The
+// caller keeps ownership: Close on the returned client is a no-op. The
+// connection should be dialed with MaxRecvMsgSize applied.
+func NewClientWithConn(conn grpc.ClientConnInterface) *Client {
+	return &Client{
+		ledger: pb.NewLedgerServiceClient(conn),
+		state:  pb.NewStateServiceClient(conn),
+		exec:   pb.NewTransactionExecutionServiceClient(conn),
+	}
+}
+
+// WithInsecure returns a DialOption that switches the connection to plaintext
+// (TLS is otherwise always used), e.g. for an internal bridge. Appended after
+// the TLS default, so a later caller-supplied transport credential still wins.
+func WithInsecure() grpc.DialOption {
+	return grpc.WithTransportCredentials(insecure.NewCredentials())
+}
+
+// NewClient creates a client for the given gRPC endpoint, "grpc://host[:port]"
+// or "host[:port]" (port defaults to 443). TLS is always used unless
+// WithInsecure (or another transport credential) is passed in dialOpts, which
+// are appended last and override the defaults. The connection is lazy.
+func NewClient(endpoint string, dialOpts ...grpc.DialOption) (*Client, error) {
+	target, err := parseEndpoint(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	opts := append([]grpc.DialOption{
+		grpc.WithTransportCredentials(credentials.NewClientTLSFromCert(nil, "")),
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxRecvMsgSize)),
+	}, dialOpts...)
+
+	conn, err := grpc.NewClient(target, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("dial %s: %w", target, err)
+	}
+	client := NewClientWithConn(conn)
+	client.ownedConn = conn
+	return client, nil
+}
+
+// Close closes the connection when it was dialed by NewClient; no-op for a
+// connection injected via NewClientWithConn (caller-owned).
+func (c *Client) Close() error {
+	if c.ownedConn == nil {
+		return nil
+	}
+	return c.ownedConn.Close()
+}
+
+// parseEndpoint accepts "grpc://host[:port]" and "host[:port]"; a missing
+// port defaults to 443. http and https are rejected: transport security is
+// not a property of the endpoint string (TLS is always the default;
+// plaintext is WithInsecure).
+func parseEndpoint(endpoint string) (target string, err error) {
+	rest := endpoint
+	if i := strings.Index(rest, "://"); i >= 0 {
+		scheme := strings.ToLower(rest[:i])
+		if scheme != "grpc" {
+			return "", fmt.Errorf("unsupported gRPC endpoint scheme %q; use grpc://host:port or host:port", scheme)
+		}
+		rest = rest[i+3:]
+	}
+	rest = strings.TrimSuffix(rest, "/")
+	if rest == "" {
+		return "", errEmptyEndpoint
+	}
+	if strings.ContainsAny(rest, "/?#") {
+		return "", errInvalidEndpoint
+	}
+	if _, _, splitErr := net.SplitHostPort(rest); splitErr != nil {
+		rest += ":443"
+	}
+	return rest, nil
+}

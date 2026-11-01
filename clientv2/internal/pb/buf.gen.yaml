@@ -1,0 +1,30 @@
+version: v2
+
+# Do NOT enable `clean`. The output directory sui/rpc/v2 holds hand-written
+# *_convert.go / convert_*.go files alongside the generated *.pb.go files;
+# `buf generate --clean` (or a `clean: true` here) would delete them.
+
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: github.com/utila-io/go-sui-sdk/clientv2/internal/pb
+    # google/rpc types are provided by genproto (already a transitive dep of
+    # grpc-go); generating them locally would panic at init with a duplicate
+    # proto file registration. Point imports at the canonical Go packages and
+    # exclude them from generation (see the Makefile --path filter).
+    # Protos live in the third_party/sui-apis submodule (module root: proto).
+    - file_option: go_package
+      path: google/rpc/status.proto
+      value: google.golang.org/genproto/googleapis/rpc/status
+    - file_option: go_package
+      path: google/rpc/error_details.proto
+      value: google.golang.org/genproto/googleapis/rpc/errdetails
+
+plugins:
+  - remote: buf.build/protocolbuffers/go
+    out: .
+    opt: paths=source_relative
+  - remote: buf.build/grpc/go
+    out: .
+    opt: paths=source_relative
