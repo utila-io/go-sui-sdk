@@ -1,5 +1,5 @@
 // Package suiclient provides the SuiClient interface, served by the
-// sui.rpc.v2 gRPC client in clientv2.
+// sui.rpc.v2 gRPC client in client.
 package suiclient
 
 import (
