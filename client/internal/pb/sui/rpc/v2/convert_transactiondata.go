@@ -29,6 +29,16 @@ func decodeTransactionData(txData []byte) (*sui_types.TransactionData, error) {
 	return &data, nil
 }
 
+// TransactionBlockData renders bare TransactionData bytes into the parsed
+// showInput data shape, e.g. for a dry run's Input.
+func TransactionBlockData(txData []byte) (types.SuiTransactionBlockData, error) {
+	data, err := decodeTransactionData(txData)
+	if err != nil {
+		return types.SuiTransactionBlockData{}, err
+	}
+	return toInternalTransactionBlock(data, nil).Data.Data, nil
+}
+
 // toInternalTransactionBlock renders decoded TransactionData into the parsed
 // showInput shape. Pure input value types are only inferred from built-in
 // command usage (see pureValueTypes); unresolved pures render as raw bytes

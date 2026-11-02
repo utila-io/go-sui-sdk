@@ -72,7 +72,8 @@ func (c *Client) ExecuteTransactionBlock(
 }
 
 // DryRunTransaction simulates a full BCS TransactionData with checks enabled.
-// The response's Input field is not reconstructed and stays zero.
+// Input is rendered from txBytes rather than echoed back by the node; it
+// stays zero if sui_types cannot decode them.
 func (c *Client) DryRunTransaction(ctx context.Context, txBytes lib.Base64Data) (*types.DryRunTransactionBlockResponse, error) {
 	resp, err := c.simulate(ctx, txBytes.Data(), pb.SimulateTransactionRequest_ENABLED, dryRunOptions)
 	if err != nil {
@@ -89,6 +90,9 @@ func (c *Client) DryRunTransaction(ctx context.Context, txBytes lib.Base64Data) 
 	}
 	if response.Effects != nil {
 		out.Effects = *response.Effects
+	}
+	if input, err := pb.TransactionBlockData(txBytes.Data()); err == nil {
+		out.Input.Data = input
 	}
 	return out, nil
 }
