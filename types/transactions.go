@@ -342,13 +342,6 @@ type SuiTransactionBlockResponseOptions struct {
 	ShowRawInput bool `json:"showRawInput,omitempty"`
 }
 
-type SuiTransactionBlockResponseQuery struct {
-	Filter  *TransactionFilter                  `json:"filter,omitempty"`
-	Options *SuiTransactionBlockResponseOptions `json:"options,omitempty"`
-}
-
-type TransactionBlocksPage = Page[SuiTransactionBlockResponse, sui_types.TransactionDigest]
-
 type DryRunTransactionBlockResponse struct {
 	Effects        lib.TagJson[SuiTransactionBlockEffects] `json:"effects"`
 	Events         []SuiEvent                              `json:"events"`

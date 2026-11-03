@@ -28,7 +28,7 @@ jobs:
     - name: Vet (including live-tagged tests)
       run: go vet -tags live ./...
 
-    # client/ and account/ tests hit Sui's retired public JSON-RPC/faucet
-    # endpoints and fail unconditionally; keep them out of CI.
+    # account/ tests fail without the WalletSdkTestM1 mnemonic; keep them out
+    # of CI.
     - name: Test
-      run: go test -v $(go list ./... | grep -v -e '/go-sui-sdk/client$' -e '/go-sui-sdk/account$')
+      run: go test -v $(go list ./... | grep -v -e '/go-sui-sdk/account$')

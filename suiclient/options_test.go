@@ -3,46 +3,24 @@ package suiclient
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
+	"net"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	"github.com/utila-io/go-sui-sdk/clientv2"
 )
 
 // unreachableEndpoint points at a port that is essentially guaranteed to be
-// closed. New must still succeed for both backends: construction is lazy and
-// performs no network I/O.
+// closed. New must still succeed: construction is lazy and performs no
+// network I/O.
 const unreachableEndpoint = "127.0.0.1:1"
-
-func backendOf(t *testing.T, c SuiClient) Backend {
-	t.Helper()
-	switch c.(type) {
-	case *jsonrpcBackend:
-		return BackendJSONRPC
-	case *clientv2.Client:
-		return BackendGRPC
-	default:
-		t.Fatalf("unexpected SuiClient concrete type %T", c)
-		return 0
-	}
-}
-
-// newAndClose constructs a client against an unreachable endpoint (must not
-// error: that is the construction-laziness assertion) and returns its backend.
-func newAndClose(t *testing.T, opts ...Option) Backend {
-	t.Helper()
-	c, err := New(unreachableEndpoint, opts...)
-	require.NoError(t, err)
-	backend := backendOf(t, c)
-	require.NoError(t, c.Close())
-	return backend
-}
 
 // callerConn returns a caller-owned gRPC connection for WithGRPCConn cases.
 func callerConn(t *testing.T) *grpc.ClientConn {
@@ -53,58 +31,24 @@ func callerConn(t *testing.T) *grpc.ClientConn {
 	return conn
 }
 
-// TestNewBackendSelection pins both backend selection precedence and
-// construction laziness: every case constructs against a closed port via
-// newAndClose without error, for either transport (plaintext or TLS).
-func TestNewBackendSelection(t *testing.T) {
+// TestNewIsLazy constructs against a closed port without error, for either
+// transport (plaintext or TLS).
+func TestNewIsLazy(t *testing.T) {
 	cases := []struct {
 		name string
-		opts func(t *testing.T) []Option
-		want Backend
+		opts []Option
 	}{
-		{
-			name: "default is jsonrpc",
-			opts: func(*testing.T) []Option { return nil },
-			want: BackendJSONRPC,
-		},
-		{
-			name: "explicit jsonrpc",
-			opts: func(*testing.T) []Option { return []Option{WithBackend(BackendJSONRPC)} },
-			want: BackendJSONRPC,
-		},
-		{
-			name: "explicit grpc stays lazy over TLS",
-			opts: func(*testing.T) []Option { return []Option{WithBackend(BackendGRPC)} },
-			want: BackendGRPC,
-		},
-		{
-			name: "grpc with insecure stays lazy over plaintext",
-			opts: func(*testing.T) []Option { return []Option{WithBackend(BackendGRPC), WithInsecure()} },
-			want: BackendGRPC,
-		},
-		{
-			name: "insecure has no effect on jsonrpc",
-			opts: func(*testing.T) []Option { return []Option{WithInsecure()} },
-			want: BackendJSONRPC,
-		},
-		{
-			name: "grpc with header stays lazy",
-			opts: func(*testing.T) []Option {
-				return []Option{WithBackend(BackendGRPC), WithHeader("x-api-key", "k123")}
-			},
-			want: BackendGRPC,
-		},
-		{
-			name: "grpc conn ignored on jsonrpc",
-			opts: func(t *testing.T) []Option {
-				return []Option{WithBackend(BackendJSONRPC), WithGRPCConn(callerConn(t))}
-			},
-			want: BackendJSONRPC,
-		},
+		{name: "default over TLS"},
+		{name: "insecure over plaintext", opts: []Option{WithInsecure()}},
+		{name: "with header", opts: []Option{WithHeader("x-api-key", "k123")}},
+		{name: "with dial options", opts: []Option{WithGRPCDialOptions(grpc.WithUserAgent("x"))}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			require.Equal(t, c.want, newAndClose(t, c.opts(t)...))
+			client, err := New(unreachableEndpoint, c.opts...)
+			require.NoError(t, err)
+			require.IsType(t, &clientv2.Client{}, client)
+			require.NoError(t, client.Close())
 		})
 	}
 }
@@ -119,44 +63,31 @@ func TestNewErrors(t *testing.T) {
 		wantErrContains string
 	}{
 		{
-			name:            "unknown backend",
-			endpoint:        unreachableEndpoint,
-			opts:            func(*testing.T) []Option { return []Option{WithBackend(Backend(42))} },
-			wantErrContains: "unknown backend",
-		},
-		{
 			name: "grpc conn with dial options",
 			opts: func(t *testing.T) []Option {
-				return []Option{WithBackend(BackendGRPC), WithGRPCConn(callerConn(t)),
-					WithGRPCDialOptions(grpc.WithUserAgent("x"))}
+				return []Option{WithGRPCConn(callerConn(t)), WithGRPCDialOptions(grpc.WithUserAgent("x"))}
 			},
 			wantErrContains: "mutually exclusive",
 		},
 		{
 			name: "grpc conn with header",
 			opts: func(t *testing.T) []Option {
-				return []Option{WithBackend(BackendGRPC), WithGRPCConn(callerConn(t)),
-					WithHeader("x-api-key", "k123")}
+				return []Option{WithGRPCConn(callerConn(t)), WithHeader("x-api-key", "k123")}
 			},
 			wantErrContains: "WithHeader",
 		},
 	}
-	// Invalid header keys error from New on both backends.
 	for _, key := range []string{"", ":authority", "grpc-timeout"} {
-		for _, backend := range []Backend{BackendJSONRPC, BackendGRPC} {
-			cases = append(cases, struct {
-				name            string
-				endpoint        string
-				opts            func(t *testing.T) []Option
-				wantErrContains string
-			}{
-				name:     fmt.Sprintf("invalid header key %q on %d", key, backend),
-				endpoint: unreachableEndpoint,
-				opts: func(*testing.T) []Option {
-					return []Option{WithBackend(backend), WithHeader(key, "v")}
-				},
-			})
-		}
+		cases = append(cases, struct {
+			name            string
+			endpoint        string
+			opts            func(t *testing.T) []Option
+			wantErrContains string
+		}{
+			name:     fmt.Sprintf("invalid header key %q", key),
+			endpoint: unreachableEndpoint,
+			opts:     func(*testing.T) []Option { return []Option{WithHeader(key, "v")} },
+		})
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -172,18 +103,18 @@ func TestNewErrors(t *testing.T) {
 
 func TestNewWithGRPCConn(t *testing.T) {
 	conn := callerConn(t)
-	c, err := New("", WithBackend(BackendGRPC), WithGRPCConn(conn))
+	c, err := New("", WithGRPCConn(conn))
 	require.NoError(t, err)
-	require.Equal(t, BackendGRPC, backendOf(t, c))
+	require.IsType(t, &clientv2.Client{}, c)
 
 	// The connection is caller-owned: Close on the client must not shut it down.
 	require.NoError(t, c.Close())
 	require.NotEqual(t, connectivity.Shutdown, conn.GetState())
 }
 
-// TestNewWithHeaderJSONRPC pins WithHeader on the JSON-RPC backend: headers
-// ride every request, and the last write per key wins, case-insensitively.
-func TestNewWithHeaderJSONRPC(t *testing.T) {
+// TestNewWithHeader pins that headers ride every request as metadata, and the
+// last write per key wins, case-insensitively.
+func TestNewWithHeader(t *testing.T) {
 	cases := []struct {
 		name    string
 		headers [][2]string
@@ -193,39 +124,42 @@ func TestNewWithHeaderJSONRPC(t *testing.T) {
 			name:    "headers sent on requests",
 			headers: [][2]string{{"Authorization", "Bearer sekret"}, {"x-api-key", "k123"}},
 			want: map[string][]string{
-				"Authorization": {"Bearer sekret"},
+				"authorization": {"Bearer sekret"},
 				"x-api-key":     {"k123"},
 			},
 		},
 		{
 			name:    "last write per key wins case-insensitively",
 			headers: [][2]string{{"X-Token", "old"}, {"x-token", "new"}},
-			want:    map[string][]string{"X-Token": {"new"}},
+			want:    map[string][]string{"x-token": {"new"}},
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			var got http.Header
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				got = r.Header.Clone()
-				_, err := fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":"123"}`)
-				require.NoError(t, err)
+			gotMD := make(chan metadata.MD, 1)
+			lis, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			server := grpc.NewServer(grpc.UnknownServiceHandler(func(_ any, stream grpc.ServerStream) error {
+				md, _ := metadata.FromIncomingContext(stream.Context())
+				gotMD <- md
+				return status.Error(codes.Unimplemented, "capture only")
 			}))
-			defer srv.Close()
+			go func() { _ = server.Serve(lis) }()
+			defer server.Stop()
 
-			opts := make([]Option, 0, len(c.headers))
+			opts := []Option{WithInsecure()}
 			for _, h := range c.headers {
 				opts = append(opts, WithHeader(h[0], h[1]))
 			}
-			client, err := New(srv.URL, opts...)
+			client, err := New(lis.Addr().String(), opts...)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, client.Close()) }()
 
-			seq, err := client.GetLatestCheckpointSequenceNumber(context.Background())
-			require.NoError(t, err)
-			require.Equal(t, uint64(123), seq)
+			_, err = client.GetLatestCheckpointSequenceNumber(context.Background())
+			require.Equal(t, codes.Unimplemented, status.Code(err))
+			md := <-gotMD
 			for key, values := range c.want {
-				require.Equal(t, values, got.Values(key), "header %s", key)
+				require.Equal(t, values, md.Get(key), "header %s", key)
 			}
 		})
 	}
