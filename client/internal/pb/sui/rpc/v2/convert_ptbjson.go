@@ -45,10 +45,27 @@ func callArgJSON(arg sui_types.CallArg, valueType string) map[string]interface{}
 			"mutable":              shared.Mutable,
 		}
 	case arg.FundsWithdrawal != nil:
-		return map[string]interface{}{"type": "fundsWithdrawal"}
+		return fundsWithdrawalJSON(*arg.FundsWithdrawal)
 	default:
 		return map[string]interface{}{}
 	}
+}
+
+// fundsWithdrawalJSON renders a SIP-58 address-balance withdrawal input.
+func fundsWithdrawalJSON(arg sui_types.FundsWithdrawalArg) map[string]interface{} {
+	out := map[string]interface{}{"type": "fundsWithdrawal"}
+	if arg.Reservation.MaxAmountU64 != nil {
+		out["reservation"] = map[string]interface{}{
+			"maxAmountU64": strconv.FormatUint(*arg.Reservation.MaxAmountU64, 10),
+		}
+	}
+	if arg.TypeArg.Balance != nil {
+		out["typeArg"] = map[string]interface{}{"balance": typeTagString(*arg.TypeArg.Balance)}
+	}
+	if arg.WithdrawFrom.Sender != nil {
+		out["withdrawFrom"] = "sender"
+	}
+	return out
 }
 
 // pureJSON renders a pure input: typed when inferred, otherwise a null

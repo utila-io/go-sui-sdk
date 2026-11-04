@@ -109,6 +109,12 @@ func TestDryRunTransaction(t *testing.T) {
 	require.Equal(t, uint64(5), change.Mutated.PreviousVersion.Uint64())
 	require.NotNil(t, change.Mutated.Owner.ObjectOwnerInternal)
 	require.Equal(t, &sender, change.Mutated.Owner.AddressOwner)
+
+	input := response.Input.Data.V1
+	require.NotNil(t, input)
+	require.Equal(t, sender, input.Sender)
+	require.EqualValues(t, 1000, input.GasData.Price.Uint64())
+	require.NotNil(t, input.Transaction.Data.ProgrammableTransaction)
 }
 
 func TestDryRunTransactionNoTransaction(t *testing.T) {

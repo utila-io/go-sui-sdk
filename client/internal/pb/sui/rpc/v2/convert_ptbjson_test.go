@@ -7,6 +7,7 @@ import (
 
 	"github.com/utila-io/go-sui-sdk/lib"
 	"github.com/utila-io/go-sui-sdk/move_types"
+	"github.com/utila-io/go-sui-sdk/sui_types"
 )
 
 func TestTypeTagString(t *testing.T) {
@@ -39,4 +40,23 @@ func TestTypeTagString(t *testing.T) {
 			require.Equal(t, c.want, typeTagString(c.in))
 		})
 	}
+}
+
+func TestCallArgJSONFundsWithdrawal(t *testing.T) {
+	maxAmount := uint64(2_000_000)
+	arg := sui_types.CallArg{FundsWithdrawal: &sui_types.FundsWithdrawalArg{
+		Reservation: sui_types.Reservation{MaxAmountU64: &maxAmount},
+		TypeArg: sui_types.WithdrawalTypeArg{Balance: &move_types.TypeTag{Struct: &move_types.StructTag{
+			Address: mustAddress(t, longSuiPackage),
+			Module:  "sui",
+			Name:    "SUI",
+		}}},
+		WithdrawFrom: sui_types.WithdrawFrom{Sender: &lib.EmptyEnum{}},
+	}}
+	require.Equal(t, map[string]interface{}{
+		"type":         "fundsWithdrawal",
+		"reservation":  map[string]interface{}{"maxAmountU64": "2000000"},
+		"typeArg":      map[string]interface{}{"balance": "0x2::sui::SUI"},
+		"withdrawFrom": "sender",
+	}, callArgJSON(arg, ""))
 }
