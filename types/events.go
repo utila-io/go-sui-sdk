@@ -65,5 +65,3 @@ type EventFilter struct {
 	//	EventFilter
 	//} `json:"Or,omitempty"`
 }
-
-type EventPage = Page[SuiEvent, EventId]

@@ -6,7 +6,7 @@ import (
 	"github.com/utila-io/go-sui-sdk/sui_types"
 )
 
-// Checkpoint mirrors the JSON-RPC sui_getCheckpoint response shape.
+// Checkpoint is a checkpoint summary with its transaction digests.
 type Checkpoint struct {
 	Epoch                      SafeSuiBigInt[EpochId]         `json:"epoch"`
 	SequenceNumber             SafeSuiBigInt[uint64]          `json:"sequenceNumber"`
@@ -21,15 +21,11 @@ type Checkpoint struct {
 	EndOfEpochData             json.RawMessage                `json:"endOfEpochData,omitempty"`
 }
 
-// CheckpointPage is a page of checkpoints as returned by sui_getCheckpoints.
-type CheckpointPage = Page[*Checkpoint, SafeSuiBigInt[uint64]]
-
 type CheckpointOption func(*CheckpointReadOptions)
 
 type CheckpointReadOptions struct {
 	// Omitted fields arrive zeroed, indistinguishable from a genuine zero, so
 	// mask out only fields the caller does not read. Empty fetches everything.
-	// JSON-RPC cannot fetch less, so a mask is a floor rather than a guarantee.
 	Mask []string
 }
 
