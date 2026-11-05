@@ -21,7 +21,7 @@ func TestTypeTagString(t *testing.T) {
 		{name: "vector of u64", in: move_types.TypeTag{Vector: &u64Tag}, want: "vector<u64>"},
 		{name: "address", in: move_types.TypeTag{Address: &lib.EmptyEnum{}}, want: "address"},
 		{
-			name: "nested struct shortens addresses",
+			name: "nested struct keeps 64-hex addresses",
 			in: move_types.TypeTag{Struct: &move_types.StructTag{
 				Address: mustAddress(t, longSuiPackage),
 				Module:  "coin",
@@ -32,7 +32,7 @@ func TestTypeTagString(t *testing.T) {
 					Name:    "SUI",
 				}}},
 			}},
-			want: "0x2::coin::Coin<0x2::sui::SUI>",
+			want: longGasType,
 		},
 	}
 	for _, c := range cases {
@@ -56,7 +56,7 @@ func TestCallArgJSONFundsWithdrawal(t *testing.T) {
 	require.Equal(t, map[string]interface{}{
 		"type":         "fundsWithdrawal",
 		"reservation":  map[string]interface{}{"maxAmountU64": "2000000"},
-		"typeArg":      map[string]interface{}{"balance": "0x2::sui::SUI"},
+		"typeArg":      map[string]interface{}{"balance": longSuiType},
 		"withdrawFrom": "sender",
 	}, callArgJSON(arg, ""))
 }

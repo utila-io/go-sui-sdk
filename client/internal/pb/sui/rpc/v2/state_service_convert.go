@@ -10,7 +10,7 @@ import (
 // CoinObjectCount and LockedBalance have no gRPC source and are left zero.
 func (x *Balance) ToInternalType() types.Balance {
 	return types.Balance{
-		CoinType:              normalizeTypeString(x.GetCoinType()),
+		CoinType:              x.GetCoinType(),
 		TotalBalance:          decimalFromUint64(x.GetBalance()),
 		FundsInAddressBalance: decimalFromUint64(x.GetAddressBalance()),
 	}

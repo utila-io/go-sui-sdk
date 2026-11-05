@@ -39,7 +39,7 @@ func TestExecutionResults(t *testing.T) {
 		require.Equal(t, []types.ExecutionResultType{
 			{
 				MutableReferenceOutputs: []types.MutableReferenceOutputType{
-					[]any{"GasCoin", []byte{0x01, 0x02}, "0x2::coin::Coin<" + shortSuiType + ">"},
+					[]any{"GasCoin", []byte{0x01, 0x02}, longGasType},
 				},
 				ReturnValues: []types.ReturnValueType{
 					[]any{[]byte{0xe8, 0x03}, "u64"},
