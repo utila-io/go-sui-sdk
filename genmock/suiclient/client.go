@@ -228,6 +228,21 @@ func (mr *MockSuiClientMockRecorder) GetLatestCheckpointSequenceNumber(ctx any) 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLatestCheckpointSequenceNumber", reflect.TypeOf((*MockSuiClient)(nil).GetLatestCheckpointSequenceNumber), ctx)
 }
 
+// GetLatestEpoch mocks base method.
+func (m *MockSuiClient) GetLatestEpoch(ctx context.Context) (uint64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetLatestEpoch", ctx)
+	ret0, _ := ret[0].(uint64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetLatestEpoch indicates an expected call of GetLatestEpoch.
+func (mr *MockSuiClientMockRecorder) GetLatestEpoch(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLatestEpoch", reflect.TypeOf((*MockSuiClient)(nil).GetLatestEpoch), ctx)
+}
+
 // GetObject mocks base method.
 func (m *MockSuiClient) GetObject(ctx context.Context, objID sui_types.ObjectID, options *types.SuiObjectDataOptions) (*types.SuiObjectResponse, error) {
 	m.ctrl.T.Helper()

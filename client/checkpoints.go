@@ -24,6 +24,15 @@ func (c *Client) GetLatestCheckpointSequenceNumber(ctx context.Context) (uint64,
 	return resp.GetCheckpointHeight(), nil
 }
 
+// GetLatestEpoch returns the epoch of the most recently executed checkpoint.
+func (c *Client) GetLatestEpoch(ctx context.Context) (uint64, error) {
+	resp, err := c.ledger.GetServiceInfo(ctx, &pb.GetServiceInfoRequest{})
+	if err != nil {
+		return 0, fmt.Errorf("GetLatestEpoch: %w", err)
+	}
+	return resp.GetEpoch(), nil
+}
+
 func (c *Client) GetCheckpoint(ctx context.Context, seqNum uint64) (*types.Checkpoint, error) {
 	checkpoint, err := c.getCheckpoint(ctx, seqNum, pb.CheckpointReadMaskPaths)
 	if err != nil {
