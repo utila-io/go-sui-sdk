@@ -317,3 +317,24 @@ func TestGetCheckpointsWithMask(t *testing.T) {
 		})
 	}
 }
+
+func TestGetLatestEpoch(t *testing.T) {
+	client, mocks := newMockClient(t)
+	mocks.ledger.EXPECT().
+		GetServiceInfo(gomock.Any(), protoEqual(&pb.GetServiceInfoRequest{})).
+		Return(&pb.GetServiceInfoResponse{Epoch: proto.Uint64(950), CheckpointHeight: proto.Uint64(341920026)}, nil)
+
+	epoch, err := client.GetLatestEpoch(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, uint64(950), epoch)
+}
+
+func TestGetLatestEpochError(t *testing.T) {
+	client, mocks := newMockClient(t)
+	mocks.ledger.EXPECT().
+		GetServiceInfo(gomock.Any(), gomock.Any()).
+		Return(nil, status.Error(codes.Unavailable, "node down"))
+
+	_, err := client.GetLatestEpoch(context.Background())
+	require.ErrorContains(t, err, "GetLatestEpoch: rpc error: code = Unavailable desc = node down")
+}
